@@ -1,1 +1,1 @@
-web: node stripe-server.js
+web: node server.js
