@@ -1,0 +1,23 @@
+{
+  "name": "converta-ai-backend",
+  "version": "1.0.0",
+  "description": "Converta.AI — Stripe + Twilio backend servers",
+  "main": "stripe-server.js",
+  "scripts": {
+    "stripe": "node stripe-server.js",
+    "twilio": "node twilio-server.js",
+    "dev:stripe": "nodemon stripe-server.js",
+    "dev:twilio": "nodemon twilio-server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "stripe": "^15.9.0",
+    "twilio": "^5.2.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.3"
+  }
+}
