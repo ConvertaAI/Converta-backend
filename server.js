@@ -1,57 +1,26 @@
 // ============================================================
 //  CONVERTA.AI — Combined Server (Stripe + Twilio + Aria)
 // ============================================================
-
 require("dotenv").config();
-const express  = require("express");
-const cors     = require("cors");
-const stripe   = require("stripe")(process.env.STRIPE_SECRET_KEY);
-const twilio   = require("twilio");
-const Anthropic = require("@anthropic-ai/sdk");
-
-const app = express();
+const express     = require("express");
+const cors        = require("cors");
+const stripe      = require("stripe")(process.env.STRIPE_SECRET_KEY);
+const twilio      = require("twilio");
+const Anthropic   = require("@anthropic-ai/sdk");
+const app         = express();
+const client      = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const anthropic   = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const VoiceResponse = twilio.twiml.VoiceResponse;
 
 // Webhook needs raw body BEFORE express.json()
 app.post("/webhook", express.raw({ type: "application/json" }), handleWebhook);
-
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// Health check
 app.get("/health", (req, res) => res.json({ status: "ok", stripe: "live", twilio: "live" }));
 app.get("/", (req, res) => res.json({ status: "Converta.AI server running" }));
 
-// ============================================================
-//  CONVERTA.AI — Stripe Billing Server
-//  File: stripe-server.js
-//  Run: node stripe-server.js
-//  Requires: npm install express stripe cors dotenv
-// ============================================================
-
-const stripe  = require("stripe")(process.env.STRIPE_SECRET_KEY);
-const cors    = require("cors");
-
-
-// ── Webhook needs raw body — mount BEFORE express.json() ──
-app.post(
-  "/webhook",
-  express.raw({ type: "application/json" }),
-  handleWebhook
-);
-
-
-// Health check
-app.get("/health", (req, res) => res.json({ status: "ok", mode: process.env.NODE_ENV || "live" }));
-
-// Root route
-app.get("/", (req, res) => res.json({ status: "Converta.AI Stripe Server running" }));
-
-
-
-// ============================================================
-//  PRICE IDs  (create these once in your Stripe Dashboard,
-//  then paste the price_xxx IDs into your .env file)
-// ============================================================
+// ── STRIPE ──────────────────────────────────────────────────
 const PLANS = {
   starter: {
     name:       "Starter",
@@ -308,45 +277,9 @@ async function handleWebhook(req, res) {
   res.json({ received: true });
 }
 
-// ============================================================
-//  START SERVER
-// ============================================================
-  console.log(`   Stripe mode: ${process.env.STRIPE_SECRET_KEY?.startsWith("sk_live") ? "LIVE 🔴" : "TEST ✅"}`);
-  console.log(`   Frontend URL: ${process.env.FRONTEND_URL || "http://localhost:3000"}\n`);
-});
 
 
-// ============================================================
-//  CONVERTA.AI — Twilio Call Routing Server
-//  File: twilio-server.js
-//  Run: node twilio-server.js
-//  Requires: npm install express twilio @anthropic-ai/sdk dotenv cors
-//
-//  HOW IT WORKS:
-//  1. Client's phone number forwards to their Twilio number
-//  2. Twilio hits /incoming-call when someone calls
-//  3. We fetch that client's config from Supabase
-//  4. Twilio reads a greeting, records the caller's response
-//  5. We send the recording to Claude for a smart reply
-//  6. Twilio speaks Claude's reply back to the caller
-//  7. Lead is saved + business owner gets a text notification
-// ============================================================
-
-const twilio     = require("twilio");
-const Anthropic  = require("@anthropic-ai/sdk");
-
-const app        = express();
-const client     = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-const anthropic  = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const VoiceResponse = twilio.twiml.VoiceResponse;
-
-app.use(express.urlencoded({ extended: false }));
-
-// ============================================================
-//  IN-MEMORY CLIENT CONFIG
-//  In production, replace with Supabase fetch:
-//    const config = await supabase.from("clients").select("*").eq("twilio_number", to).single()
-// ============================================================
+// ── TWILIO / ARIA ────────────────────────────────────────────
 const CLIENT_CONFIGS = {
   "+14045550100": {
     businessName:    "Bright Smile Dental",
@@ -684,17 +617,10 @@ function getDefaultConfig() {
 // ============================================================
 //  START SERVER
 // ============================================================
-  console.log(`   Webhook URL for Twilio: ${process.env.SERVER_URL || "https://your-server.com"}/incoming-call`);
-  console.log(`   Set this URL in your Twilio console under Phone Numbers > Voice\n`);
-});
 
-
-// ============================================================
-//  START SERVER
-// ============================================================
+// ── START SERVER ─────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
-  console.log(`\n🚀 Converta.AI server running on port ${PORT}`);
-  console.log(`   Stripe: LIVE`);
-  console.log(`   Aria/Twilio: LIVE`);
+  console.log("\n🚀 Converta.AI server running on port " + PORT);
+  console.log("   Stripe: LIVE | Twilio: LIVE");
 });
