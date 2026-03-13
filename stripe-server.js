@@ -22,6 +22,14 @@ app.post(
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
+// Health check
+app.get("/health", (req, res) => res.json({ status: "ok", mode: process.env.NODE_ENV || "live" }));
+
+// Root route
+app.get("/", (req, res) => res.json({ status: "Converta.AI Stripe Server running" }));
+
+
+
 // ============================================================
 //  PRICE IDs  (create these once in your Stripe Dashboard,
 //  then paste the price_xxx IDs into your .env file)
