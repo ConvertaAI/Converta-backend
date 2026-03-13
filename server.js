@@ -1,11 +1,25 @@
 // ============================================================
-//  CONVERTA.AI — Combined Server (Stripe + Twilio)
-//  Run: node server.js
+//  CONVERTA.AI — Combined Server (Stripe + Twilio + Aria)
 // ============================================================
 
 require("dotenv").config();
-const express = require("express");
+const express  = require("express");
+const cors     = require("cors");
+const stripe   = require("stripe")(process.env.STRIPE_SECRET_KEY);
+const twilio   = require("twilio");
+const Anthropic = require("@anthropic-ai/sdk");
+
 const app = express();
+
+// Webhook needs raw body BEFORE express.json()
+app.post("/webhook", express.raw({ type: "application/json" }), handleWebhook);
+
+app.use(cors({ origin: "*" }));
+app.use(express.json());
+
+// Health check
+app.get("/health", (req, res) => res.json({ status: "ok", stripe: "live", twilio: "live" }));
+app.get("/", (req, res) => res.json({ status: "Converta.AI server running" }));
 
 // ============================================================
 //  CONVERTA.AI — Stripe Billing Server
@@ -14,12 +28,9 @@ const app = express();
 //  Requires: npm install express stripe cors dotenv
 // ============================================================
 
-require("dotenv").config();
-const express = require("express");
 const stripe  = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const cors    = require("cors");
 
-const app = express();
 
 // ── Webhook needs raw body — mount BEFORE express.json() ──
 app.post(
@@ -28,8 +39,6 @@ app.post(
   handleWebhook
 );
 
-app.use(cors({ origin: "*" }));
-app.use(express.json());
 
 // Health check
 app.get("/health", (req, res) => res.json({ status: "ok", mode: process.env.NODE_ENV || "live" }));
@@ -302,17 +311,10 @@ async function handleWebhook(req, res) {
 // ============================================================
 //  START SERVER
 // ============================================================
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`\n🚀 Converta.AI Stripe server running on port ${PORT}`);
   console.log(`   Stripe mode: ${process.env.STRIPE_SECRET_KEY?.startsWith("sk_live") ? "LIVE 🔴" : "TEST ✅"}`);
   console.log(`   Frontend URL: ${process.env.FRONTEND_URL || "http://localhost:3000"}\n`);
 });
 
-
-// ============================================================
-//  TWILIO / ARIA ROUTES
-// ============================================================
 
 // ============================================================
 //  CONVERTA.AI — Twilio Call Routing Server
@@ -682,13 +684,17 @@ function getDefaultConfig() {
 // ============================================================
 //  START SERVER
 // ============================================================
+  console.log(`   Webhook URL for Twilio: ${process.env.SERVER_URL || "https://your-server.com"}/incoming-call`);
+  console.log(`   Set this URL in your Twilio console under Phone Numbers > Voice\n`);
+});
+
 
 // ============================================================
-//  START COMBINED SERVER
+//  START SERVER
 // ============================================================
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`\n🚀 Converta.AI server running on port ${PORT}`);
   console.log(`   Stripe: LIVE`);
-  console.log(`   Twilio: LIVE`);
+  console.log(`   Aria/Twilio: LIVE`);
 });
