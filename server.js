@@ -156,14 +156,14 @@ function getDefaultConfig() {
 app.post("/call-status", async (req, res) => {
   const callSid    = req.body.CallSid;
   const callStatus = req.body.CallStatus;
-  console.log(`📵 Call ${callSid} ended with status: ${callStatus}`);
+  console.log(`📵 Call ${callSid} ended: ${callStatus}`);
 
   const session = CALL_SESSIONS.get(callSid);
-  if (session && session.messages.length > 0) {
-    // Only notify if we actually had a conversation
+  if (session && session.messages.length > 0 && !session.notified) {
+    session.notified = true;
     await saveLeadAndNotify(session, callSid);
-    CALL_SESSIONS.delete(callSid);
   }
+  CALL_SESSIONS.delete(callSid);
   res.sendStatus(200);
 });
 
@@ -259,10 +259,12 @@ wss.on("connection", (ws) => {
               extractLeadData(session, fullText);
 
               let reply;
+              let isClosing = false;
+
               if (session.turnCount >= 8 || hasEnoughLeadInfo(session.leadData)) {
                 reply = await getClosingMessage(session);
-                await saveLeadAndNotify(session, callSid);
-                CALL_SESSIONS.delete(callSid);
+                isClosing = true;
+                session.notified = true; // mark so call-status doesn't double-send
               } else {
                 reply = await getAriaResponse(session, fullText);
                 session.messages.push({ role: "assistant", content: reply });
@@ -270,11 +272,19 @@ wss.on("connection", (ws) => {
 
               console.log(`🤖 Aria: "${reply}"`);
 
-              // Speak reply via Twilio
               const safeReply = reply.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-              await client.calls(callSid).update({
-                twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safeReply}</Say><Connect><Stream url="wss://${SERVER_URL.replace("https://","")}/media-stream"><Parameter name="callSid" value="${callSid}"/></Stream></Connect></Response>`
-              });
+
+              if (isClosing) {
+                // Say goodbye and hang up - do NOT reconnect stream
+                await client.calls(callSid).update({
+                  twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safeReply}</Say><Pause length="1"/><Hangup/></Response>`
+                });
+              } else {
+                // Continue conversation - reconnect stream
+                await client.calls(callSid).update({
+                  twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safeReply}</Say><Connect><Stream url="wss://${SERVER_URL.replace("https://","")}/media-stream"><Parameter name="callSid" value="${callSid}"/></Stream></Connect></Response>`
+                });
+              }
 
             } catch(err) {
               console.error("Processing error:", err.message);
