@@ -492,17 +492,15 @@ app.post("/incoming-call", async (req, res) => {
     config.greeting
   );
 
-  // Gather speech in real-time
-  const gather = twiml.gather({
-    input:         "speech dtmf",
+  // Gather speech
+  twiml.gather({
+    input:         "speech",
     action:        `/process-speech/${callSid}`,
-    speechTimeout: 3,
-    timeout:       10,
+    speechTimeout: "auto",
+    timeout:       5,
     language:      "en-US",
+    hints:         "appointment, booking, question, new patient, existing patient, emergency",
   });
-  // Fallback if no speech detected
-  twiml.say({ voice: "Polly.Joanna-Neural" }, "Are you still there? Please speak after the tone.");
-  twiml.redirect(`/process-speech/${callSid}`);
 
   res.type("text/xml").send(twiml.toString());
 });
@@ -530,14 +528,13 @@ app.post("/process-speech/:callSid", async (req, res) => {
   if (!transcription) {
     const twiml2 = new VoiceResponse();
     twiml2.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, "I'm sorry, I didn't catch that. Could you please repeat that?");
-    const retryGather = twiml2.gather({
-      input:         "speech dtmf",
+    twiml2.gather({
+      input:         "speech",
       action:        `/process-speech/${callSid}`,
-      speechTimeout: 3,
-      timeout:       10,
+      speechTimeout: "auto",
+      timeout:       5,
       language:      "en-US",
     });
-    twiml2.redirect(`/process-speech/${callSid}`);
     return res.type("text/xml").send(twiml2.toString());
   }
 
@@ -571,15 +568,13 @@ app.post("/process-speech/:callSid", async (req, res) => {
     twiml.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, aiReply);
 
     // Gather next response
-    const nextGather = twiml.gather({
-      input:         "speech dtmf",
+    twiml.gather({
+      input:         "speech",
       action:        `/process-speech/${callSid}`,
-      speechTimeout: 3,
-      timeout:       10,
+      speechTimeout: "auto",
+      timeout:       5,
       language:      "en-US",
     });
-    twiml.say({ voice: "Polly.Joanna-Neural" }, "Are you still there?");
-    twiml.redirect(`/process-speech/${callSid}`);
 
   } catch (err) {
     console.error("Claude API error FULL:", JSON.stringify(err));
