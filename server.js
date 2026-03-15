@@ -22,6 +22,7 @@ const VoiceResponse = twilio.twiml.VoiceResponse;
 app.post("/webhook", express.raw({ type: "application/json" }), handleWebhook);
 app.use(cors({ origin: "*" }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // Parse Twilio webhooks
 
 const SERVER_URL = process.env.SERVER_URL || "https://web-production-46fe1e.up.railway.app";
 
