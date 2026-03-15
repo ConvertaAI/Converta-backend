@@ -11,6 +11,16 @@ const stripe      = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const twilio      = require("twilio");
 const Anthropic   = require("@anthropic-ai/sdk");
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
+const nodemailer  = require("nodemailer");
+const fetch       = require("node-fetch");
+
+const mailer = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.NOTIFY_EMAIL,
+    pass: process.env.GMAIL_APP_PASSWORD
+  }
+});
 
 const app         = express();
 const server      = http.createServer(app);
@@ -290,7 +300,7 @@ wss.on("connection", (ws) => {
               console.error("Processing error:", err.message);
             }
             isProcessing = false;
-          }, 800); // Wait 800ms of silence before processing
+          }, 600); // Wait 600ms of silence before processing
         }
       });
 
@@ -350,11 +360,12 @@ function extractLeadData(session, text) {
   }
 }
 
-function hasEnoughLeadInfo(ld) { return ld.name && ld.reason; }
+function hasEnoughLeadInfo(ld) { return (ld.name || ld.phone) && ld.reason; }
 
 async function getClosingMessage(session) {
-  const name = session.leadData.name ? `, ${session.leadData.name.split(" ")[0]}` : "";
-  return `Perfect${name}! I've captured your info and our team will call you back shortly. Have a great day!`;
+  const name = session.leadData.name ? session.leadData.name.split(" ")[0] : null;
+  const greeting = name ? `Thanks ${name}!` : "Thanks so much!";
+  return `${greeting} I've got your info and someone from our team will be in touch with you shortly. Have a great day!`;
 }
 
 async function saveLeadAndNotify(session, callSid) {
