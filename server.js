@@ -598,11 +598,14 @@ app.post("/process-speech/:callSid", async (req, res) => {
   const twiml      = new VoiceResponse();
   const callSid    = req.params.callSid;
   const session    = CALL_SESSIONS.get(callSid);
-  const recordingUrl = req.body.RecordingUrl;
+  // Twilio may send params in body OR query string
+  const params = Object.assign({}, req.query, req.body);
+  const recordingUrl = params.RecordingUrl;
 
-  console.log("📥 process-speech body keys:", Object.keys(req.body).join(", "));
+  console.log("📥 query keys:", Object.keys(req.query).join(", ") || "none");
+  console.log("📥 body keys:", Object.keys(req.body).join(", ") || "none");
   console.log("📥 RecordingUrl:", recordingUrl);
-  console.log("📥 RecordingStatus:", req.body.RecordingStatus);
+  console.log("📥 RecordingStatus:", params.RecordingStatus);
 
   if (!session) {
     twiml.say({ voice: "Polly.Joanna-Neural" }, "I'm sorry, there was a connection issue. Please call back and we'll be happy to help!");
