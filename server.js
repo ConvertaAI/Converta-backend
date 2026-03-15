@@ -519,8 +519,22 @@ app.post("/process-speech/:callSid", async (req, res) => {
     return res.type("text/xml").send(twiml.toString());
   }
 
-  const transcription = req.body.TranscriptionText || req.body.SpeechResult || "";
+  const transcription = (req.body.TranscriptionText || req.body.SpeechResult || "").trim();
   console.log(`🎙 Caller said: "${transcription}"`);
+
+  // If transcription is empty, ask caller to repeat
+  if (!transcription) {
+    const twiml2 = new VoiceResponse();
+    twiml2.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, "I'm sorry, I didn't catch that. Could you please repeat that?");
+    twiml2.record({
+      action:    `/process-speech/${callSid}`,
+      maxLength:  15,
+      playBeep:   false,
+      transcribe: true,
+      transcribeCallback: `/save-transcript/${callSid}`,
+    });
+    return res.type("text/xml").send(twiml2.toString());
+  }
 
   session.messages.push({ role: "user", content: transcription });
   session.turnCount++;
