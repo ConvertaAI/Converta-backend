@@ -331,13 +331,49 @@ async function getClosingMessage(session) {
 }
 
 async function saveLeadAndNotify(session, callSid) {
-  const { config, leadData } = session;
+  const { config, leadData, messages, startTime } = session;
+  const duration = Math.round((Date.now() - startTime) / 1000);
   console.log(`✅ Lead saved: ${JSON.stringify(leadData)} for ${config.businessName}`);
-  try {
-    if (process.env.NOTIFY_EMAIL) {
-      console.log(`📧 Would notify ${process.env.NOTIFY_EMAIL} about new lead from ${leadData.phone}`);
+
+  // Build transcript
+  const transcript = messages.map(m => `${m.role === "user" ? "Caller" : "Aria"}: ${m.content}`).join("\n");
+
+  // Email to business owner
+  const ownerEmail = config.ownerEmail || process.env.NOTIFY_EMAIL;
+  if (ownerEmail && process.env.GMAIL_APP_PASSWORD) {
+    try {
+      await mailer.sendMail({
+        from: `"Converta.AI" <${process.env.NOTIFY_EMAIL}>`,
+        to: ownerEmail,
+        subject: `📞 New Lead: ${leadData.name || "Unknown"} called ${config.businessName}`,
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#f9f9f9;padding:20px;border-radius:8px">
+            <div style="background:#00d4aa;padding:16px 20px;border-radius:6px 6px 0 0">
+              <h2 style="color:#020408;margin:0;font-size:18px">📞 New Lead Captured by Aria</h2>
+            </div>
+            <div style="background:#fff;padding:20px;border-radius:0 0 6px 6px;border:1px solid #e0e0e0">
+              <table style="width:100%;border-collapse:collapse">
+                <tr><td style="padding:8px 0;color:#666;width:140px">Business</td><td style="padding:8px 0;font-weight:bold">${config.businessName}</td></tr>
+                <tr><td style="padding:8px 0;color:#666">Caller name</td><td style="padding:8px 0;font-weight:bold">${leadData.name || "Not captured"}</td></tr>
+                <tr><td style="padding:8px 0;color:#666">Phone number</td><td style="padding:8px 0;font-weight:bold"><a href="tel:${leadData.phone}">${leadData.phone || "Unknown"}</a></td></tr>
+                <tr><td style="padding:8px 0;color:#666">Reason for call</td><td style="padding:8px 0;font-weight:bold">${leadData.reason || "Not captured"}</td></tr>
+                <tr><td style="padding:8px 0;color:#666">Call duration</td><td style="padding:8px 0">${duration} seconds</td></tr>
+                <tr><td style="padding:8px 0;color:#666">Time</td><td style="padding:8px 0">${new Date().toLocaleString()}</td></tr>
+              </table>
+              <div style="margin-top:20px;padding:16px;background:#f5f5f5;border-radius:6px">
+                <p style="margin:0 0 8px;font-weight:bold;color:#333">Call Transcript</p>
+                <pre style="margin:0;font-size:13px;color:#444;white-space:pre-wrap;font-family:Arial,sans-serif">${transcript}</pre>
+              </div>
+              <p style="margin:20px 0 0;font-size:12px;color:#999">Powered by Converta.AI — Your AI Receptionist</p>
+            </div>
+          </div>
+        `
+      });
+      console.log(`📧 Lead email sent to ${ownerEmail}`);
+    } catch(e) {
+      console.error("Email error:", e.message);
     }
-  } catch(e) { console.error("Notify error:", e.message); }
+  }
 }
 
 // ============================================================
