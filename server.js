@@ -17,6 +17,8 @@ app.post("/webhook", express.raw({ type: "application/json" }), handleWebhook);
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
+const SERVER_URL = process.env.SERVER_URL || "https://web-production-46fe1e.up.railway.app";
+
 app.get("/health", (req, res) => res.json({ status: "ok", stripe: "live", twilio: "live" }));
 app.get("/", (req, res) => res.json({ status: "Converta.AI server running" }));
 
@@ -495,7 +497,7 @@ app.post("/incoming-call", async (req, res) => {
   // Gather speech
   twiml.gather({
     input:         "speech",
-    action:        `/process-speech/${callSid}`,
+    action:        `${SERVER_URL}/process-speech/${callSid}`,
     speechTimeout: "auto",
     timeout:       5,
     language:      "en-US",
@@ -530,7 +532,7 @@ app.post("/process-speech/:callSid", async (req, res) => {
     twiml2.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, "I'm sorry, I didn't catch that. Could you please repeat that?");
     twiml2.gather({
       input:         "speech",
-      action:        `/process-speech/${callSid}`,
+      action:        `${SERVER_URL}/process-speech/${callSid}`,
       speechTimeout: "auto",
       timeout:       5,
       language:      "en-US",
@@ -570,7 +572,7 @@ app.post("/process-speech/:callSid", async (req, res) => {
     // Gather next response
     twiml.gather({
       input:         "speech",
-      action:        `/process-speech/${callSid}`,
+      action:        `${SERVER_URL}/process-speech/${callSid}`,
       speechTimeout: "auto",
       timeout:       5,
       language:      "en-US",
@@ -768,6 +770,7 @@ app.post("/provision-number", async (req, res) => {
 // ============================================================
 //  GET /health — simple health check
 // ============================================================
+
 app.get("/health", (req, res) => {
   res.json({
     status:  "ok",
