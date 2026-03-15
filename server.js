@@ -465,6 +465,46 @@ app.get("/demo/deactivate", (req, res) => {
   res.redirect("/demo");
 });
 
+
+// ── POST /transcribe/:callSid — receives transcription from Twilio ──
+app.post("/transcribe/:callSid", async (req, res) => {
+  const callSid = req.params.callSid;
+  const text = (req.body.TranscriptionText || "").trim();
+  console.log(`📝 Transcription for ${callSid}: "${text}"`);
+  
+  const session = CALL_SESSIONS.get(callSid);
+  if (!session || !text) return res.sendStatus(200);
+
+  try {
+    session.messages.push({ role: "user", content: text });
+    session.turnCount++;
+    
+    const aiReply = await getAriaResponse(session, text);
+    session.messages.push({ role: "assistant", content: aiReply });
+    extractLeadData(session, text);
+    
+    // Make outbound call to speak the reply
+    const twiml = new VoiceResponse();
+    twiml.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, aiReply);
+    twiml.record({
+      action:             `${SERVER_URL}/process-speech/${callSid}`,
+      maxLength:          8,
+      playBeep:           false,
+      trim:               "trim-silence",
+      transcribe:         true,
+      transcribeCallback: `${SERVER_URL}/transcribe/${callSid}`,
+    });
+    
+    // Update the live call with new TwiML
+    await client.calls(callSid).update({ twiml: twiml.toString() });
+    console.log(`🤖 Aria replied: "${aiReply}"`);
+  } catch(err) {
+    console.error("Transcribe handler error:", err.message);
+  }
+  
+  res.sendStatus(200);
+});
+
 // ============================================================
 //  POST /incoming-call
 //  Twilio hits this when someone calls a client's Aria number
@@ -495,13 +535,13 @@ app.post("/incoming-call", async (req, res) => {
   );
 
   // Gather speech
-  twiml.gather({
-    input:         "speech",
-    action:        `${SERVER_URL}/process-speech/${callSid}`,
-    speechTimeout: 3,
-    timeout:       15,
-    language:      "en-US",
-    hints:         "appointment, booking, question, new patient, existing patient, emergency, yes, no, hello",
+  twiml.record({
+    action:             `${SERVER_URL}/process-speech/${callSid}`,
+    maxLength:          8,
+    playBeep:           false,
+    trim:               "trim-silence",
+    transcribe:         true,
+    transcribeCallback: `${SERVER_URL}/transcribe/${callSid}`,
   });
 
   res.type("text/xml").send(twiml.toString());
@@ -530,12 +570,13 @@ app.post("/process-speech/:callSid", async (req, res) => {
   if (!transcription) {
     const twiml2 = new VoiceResponse();
     twiml2.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, "I'm sorry, I didn't catch that. Could you please repeat that?");
-    twiml2.gather({
-      input:         "speech",
-      action:        `${SERVER_URL}/process-speech/${callSid}`,
-      speechTimeout: 3,
-      timeout:       15,
-      language:      "en-US",
+    twiml2.record({
+      action:             `${SERVER_URL}/process-speech/${callSid}`,
+      maxLength:          8,
+      playBeep:           false,
+      trim:               "trim-silence",
+      transcribe:         true,
+      transcribeCallback: `${SERVER_URL}/transcribe/${callSid}`,
     });
     return res.type("text/xml").send(twiml2.toString());
   }
