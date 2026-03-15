@@ -581,12 +581,10 @@ app.post("/incoming-call", async (req, res) => {
 
   // Gather speech
   twiml.record({
-    action:                        `${SERVER_URL}/noop`,
-    maxLength:                     8,
-    playBeep:                      false,
-    trim:                          "trim-silence",
-    recordingStatusCallback:       `${SERVER_URL}/recording/${callSid}`,
-    recordingStatusCallbackEvent:  ["completed"],
+    action:    `${SERVER_URL}/process-speech/${callSid}`,
+    maxLength: 8,
+    playBeep:  false,
+    trim:      "trim-silence",
   });
 
   res.type("text/xml").send(twiml.toString());
@@ -602,7 +600,9 @@ app.post("/process-speech/:callSid", async (req, res) => {
   const session    = CALL_SESSIONS.get(callSid);
   const recordingUrl = req.body.RecordingUrl;
 
-  console.log("📥 process-speech body:", JSON.stringify(req.body));
+  console.log("📥 process-speech body keys:", Object.keys(req.body).join(", "));
+  console.log("📥 RecordingUrl:", recordingUrl);
+  console.log("📥 RecordingStatus:", req.body.RecordingStatus);
 
   if (!session) {
     twiml.say({ voice: "Polly.Joanna-Neural" }, "I'm sorry, there was a connection issue. Please call back and we'll be happy to help!");
