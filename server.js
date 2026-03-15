@@ -1,6 +1,6 @@
 // ============================================================
 //  CONVERTA.AI — Combined Server (Stripe + Twilio + Aria)
-// ===========================================================
+// ============================================================
 require("dotenv").config();
 const express     = require("express");
 const cors        = require("cors");
@@ -281,6 +281,14 @@ async function handleWebhook(req, res) {
 
 // ── TWILIO / ARIA ────────────────────────────────────────────
 const CLIENT_CONFIGS = {
+  "+18339686657": {
+    businessName:    process.env.BUSINESS_NAME || "Converta.AI",
+    ownerPhone:      process.env.NOTIFY_EMAIL || "jaymflight@gmail.com",
+    greeting:        process.env.ARIA_GREETING || "Thank you for calling! I'm Aria, your AI assistant. How can I help you today?",
+    businessType:    "business",
+    faqs:            [],
+    appointmentQuestions: ["What's your name?", "What can we help you with today?"],
+  },
   "+14045550100": {
     businessName:    "Bright Smile Dental",
     ownerPhone:      "+14045550192",
@@ -605,9 +613,9 @@ app.get("/health", (req, res) => {
 
 function getDefaultConfig() {
   return {
-    businessName:  "Our Business",
-    ownerPhone:    process.env.NOTIFY_PHONE || "+14045550000",
-    greeting:      "Thank you for calling! I'm Aria, your AI assistant. How can I help you today?",
+    businessName:  process.env.BUSINESS_NAME || "Converta.AI",
+    ownerPhone:    process.env.NOTIFY_PHONE || process.env.TWILIO_PHONE_NUMBER,
+    greeting:      process.env.ARIA_GREETING || "Thank you for calling! I'm Aria, your AI assistant. How can I help you today?",
     businessType:  "business",
     faqs:          [],
     appointmentQuestions: ["What's your name?", "What can we help you with today?"],
