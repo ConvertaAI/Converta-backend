@@ -596,9 +596,12 @@ app.post("/incoming-call", async (req, res) => {
 //  Called after each caller response — sends to Claude, speaks reply
 // ============================================================
 app.post("/process-speech/:callSid", async (req, res) => {
-  const twiml   = new VoiceResponse();
-  const callSid = req.params.callSid;
-  const session = CALL_SESSIONS.get(callSid);
+  const twiml      = new VoiceResponse();
+  const callSid    = req.params.callSid;
+  const session    = CALL_SESSIONS.get(callSid);
+  const recordingUrl = req.body.RecordingUrl;
+
+  console.log("📥 process-speech body:", JSON.stringify(req.body));
 
   if (!session) {
     twiml.say({ voice: "Polly.Joanna-Neural" }, "I'm sorry, there was a connection issue. Please call back and we'll be happy to help!");
@@ -606,9 +609,83 @@ app.post("/process-speech/:callSid", async (req, res) => {
     return res.type("text/xml").send(twiml.toString());
   }
 
-  console.log("📥 Full request body:", JSON.stringify(req.body));
-  const transcription = (req.body.SpeechResult || req.body.TranscriptionText || "").trim();
-  console.log(`🎙 Caller said: "${transcription}"`);
+  // If we have a recording URL, transcribe it with Whisper
+  if (recordingUrl) {
+    console.log(`🎙 Got recording URL: ${recordingUrl}`);
+    res.type("text/xml").send("<Response></Response>"); // Acknowledge immediately
+    
+    try {
+      const tmpFile = path.join(os.tmpdir(), `${callSid}_${Date.now()}.mp3`);
+      const authStr = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString("base64");
+      
+      await new Promise((resolve, reject) => {
+        const fileStream = fs.createWriteStream(tmpFile);
+        https.get(recordingUrl + ".mp3", { headers: { Authorization: `Basic ${authStr}` } }, (response) => {
+          response.pipe(fileStream);
+          fileStream.on("finish", () => { fileStream.close(); resolve(); });
+        }).on("error", reject);
+      });
+
+      const transcriptionResult = await openai.audio.transcriptions.create({
+        file:  fs.createReadStream(tmpFile),
+        model: "whisper-1",
+      });
+      fs.unlink(tmpFile, () => {});
+
+      const transcription = (transcriptionResult.text || "").trim();
+      console.log(`📝 Whisper: "${transcription}"`);
+
+      if (!transcription) {
+        await client.calls(callSid).update({
+          twiml: `<Response><Say voice="Polly.Joanna-Neural">I didn't catch that, could you repeat?</Say><Record action="${SERVER_URL}/process-speech/${callSid}" maxLength="8" playBeep="false" trim="trim-silence"/></Response>`
+        });
+        return;
+      }
+
+      session.messages.push({ role: "user", content: transcription });
+      session.turnCount++;
+      extractLeadData(session, transcription);
+
+      if (session.turnCount >= 8 || hasEnoughLeadInfo(session.leadData)) {
+        const closing = await getClosingMessage(session);
+        await saveLeadAndNotify(session, callSid);
+        await client.calls(callSid).update({
+          twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${closing}</Say><Hangup/></Response>`
+        });
+        CALL_SESSIONS.delete(callSid);
+        return;
+      }
+
+      const aiReply = await getAriaResponse(session, transcription);
+      session.messages.push({ role: "assistant", content: aiReply });
+      console.log(`🤖 Aria: "${aiReply}"`);
+
+      const safeReply = aiReply.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;");
+      await client.calls(callSid).update({
+        twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safeReply}</Say><Record action="${SERVER_URL}/process-speech/${callSid}" maxLength="8" playBeep="false" trim="trim-silence"/></Response>`
+      });
+
+    } catch(err) {
+      console.error("Whisper error:", err.message);
+      await client.calls(callSid).update({
+        twiml: `<Response><Say voice="Polly.Joanna-Neural">Sorry about that. Let me get someone to call you back.</Say><Hangup/></Response>`
+      });
+    }
+    return;
+  }
+
+  // No recording URL yet - just acknowledge and wait
+  twiml.say({ voice: "Polly.Joanna-Neural" }, "One moment please.");
+  twiml.record({
+    action:   `${SERVER_URL}/process-speech/${callSid}`,
+    maxLength: 8,
+    playBeep:  false,
+    trim:      "trim-silence",
+  });
+  res.type("text/xml").send(twiml.toString());
+  return;
+
+  const transcription = ""; // legacy fallback
 
   // If transcription is empty, ask caller to repeat
   if (!transcription) {
