@@ -621,19 +621,21 @@ app.post("/process-speech/:callSid", async (req, res) => {
     console.log(`🎙 Got recording URL: ${recordingUrl}`);
     
     try {
-      const tmpFile = path.join(os.tmpdir(), `${callSid}_${Date.now()}.mp3`);
+      // Stream recording directly to Whisper without saving to disk
       const authStr = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString("base64");
+      const fetch = (await import("node-fetch")).default;
+      const audioResp = await fetch(recordingUrl + ".mp3", {
+        headers: { Authorization: `Basic ${authStr}` }
+      });
+      if (!audioResp.ok) throw new Error("Recording fetch failed: " + audioResp.status);
       
+      // Save to temp file (required by OpenAI SDK)
+      const tmpFile = path.join(os.tmpdir(), `${callSid}.mp3`);
+      const fileStream = fs.createWriteStream(tmpFile);
       await new Promise((resolve, reject) => {
-        const fileStream = fs.createWriteStream(tmpFile);
-        https.get(recordingUrl + ".mp3", { headers: { Authorization: `Basic ${authStr}` } }, (response) => {
-          if (response.statusCode !== 200) {
-            reject(new Error("Recording download failed: " + response.statusCode));
-            return;
-          }
-          response.pipe(fileStream);
-          fileStream.on("finish", () => { fileStream.close(); resolve(); });
-        }).on("error", reject);
+        audioResp.body.pipe(fileStream);
+        fileStream.on("finish", resolve);
+        fileStream.on("error", reject);
       });
 
       const transcriptionResult = await openai.audio.transcriptions.create({
