@@ -321,8 +321,8 @@ const CALL_SESSIONS = new Map();
 // ============================================================
 app.post("/incoming-call", async (req, res) => {
   const twiml    = new VoiceResponse();
-  const callSid  = req.body.CallSid;
-  const toNumber = req.body.To;
+  const callSid  = req.body.CallSid || req.query.CallSid || ("call_" + Date.now());
+  const toNumber = req.body.To || req.query.To || process.env.TWILIO_PHONE_NUMBER;
 
   const config = CLIENT_CONFIGS[toNumber] || getDefaultConfig();
 
