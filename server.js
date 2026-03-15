@@ -492,14 +492,18 @@ app.post("/incoming-call", async (req, res) => {
     config.greeting
   );
 
-  // Record the caller's first response
-  twiml.record({
+  // Gather speech in real-time (faster than record+transcribe)
+  const gather = twiml.gather({
+    input:           "speech",
     action:          `/process-speech/${callSid}`,
-    maxLength:        15,
-    playBeep:         false,
-    transcribe:       true,
-    transcribeCallback: `/save-transcript/${callSid}`,
+    speechTimeout:   "auto",
+    speechModel:     "phone_call",
+    enhanced:        true,
+    language:        "en-US",
   });
+  gather.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, "");
+  // Fallback if no speech detected
+  twiml.redirect(`/process-speech/${callSid}`);
 
   res.type("text/xml").send(twiml.toString());
 });
@@ -519,20 +523,23 @@ app.post("/process-speech/:callSid", async (req, res) => {
     return res.type("text/xml").send(twiml.toString());
   }
 
-  const transcription = (req.body.TranscriptionText || req.body.SpeechResult || "").trim();
+  const transcription = (req.body.SpeechResult || req.body.TranscriptionText || "").trim();
   console.log(`🎙 Caller said: "${transcription}"`);
 
   // If transcription is empty, ask caller to repeat
   if (!transcription) {
     const twiml2 = new VoiceResponse();
     twiml2.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, "I'm sorry, I didn't catch that. Could you please repeat that?");
-    twiml2.record({
-      action:    `/process-speech/${callSid}`,
-      maxLength:  15,
-      playBeep:   false,
-      transcribe: true,
-      transcribeCallback: `/save-transcript/${callSid}`,
+    const retryGather = twiml2.gather({
+      input:        "speech",
+      action:       `/process-speech/${callSid}`,
+      speechTimeout: "auto",
+      speechModel:  "phone_call",
+      enhanced:     true,
+      language:     "en-US",
     });
+    retryGather.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, "");
+    twiml2.redirect(`/process-speech/${callSid}`);
     return res.type("text/xml").send(twiml2.toString());
   }
 
@@ -565,14 +572,17 @@ app.post("/process-speech/:callSid", async (req, res) => {
     // Speak the reply
     twiml.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, aiReply);
 
-    // Record next response
-    twiml.record({
-      action:    `/process-speech/${callSid}`,
-      maxLength:  15,
-      playBeep:   false,
-      transcribe: true,
-      transcribeCallback: `/save-transcript/${callSid}`,
+    // Gather next response in real-time
+    const nextGather = twiml.gather({
+      input:        "speech",
+      action:       `/process-speech/${callSid}`,
+      speechTimeout: "auto",
+      speechModel:  "phone_call",
+      enhanced:     true,
+      language:     "en-US",
     });
+    nextGather.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, "");
+    twiml.redirect(`/process-speech/${callSid}`);
 
   } catch (err) {
     console.error("Claude API error FULL:", JSON.stringify(err));
