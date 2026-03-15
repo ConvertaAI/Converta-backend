@@ -509,7 +509,7 @@ app.post("/recording/:callSid", async (req, res) => {
 
     if (!text) {
       await client.calls(callSid).update({
-        twiml: `<Response><Say voice="Polly.Joanna-Neural">I'm sorry, I didn't catch that. Could you please repeat?</Say><Record action="${SERVER_URL}/process-speech/${callSid}" maxLength="8" playBeep="false" trim="trim-silence" recordingStatusCallback="${SERVER_URL}/recording/${callSid}"/></Response>`
+        twiml: `<Response><Say voice="Polly.Joanna-Neural">I'm sorry, I didn't catch that. Could you please repeat?</Say><Record action="${SERVER_URL}/process-speech/${callSid}" maxLength="8" playBeep="false" trim="trim-silence" recordingStatusCallback="${SERVER_URL}/recording/${callSid}" recordingStatusCallbackEvent="completed"/></Response>`
       });
       return res.sendStatus(200);
     }
@@ -534,7 +534,7 @@ app.post("/recording/:callSid", async (req, res) => {
 
     // Speak reply and record next response
     await client.calls(callSid).update({
-      twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${aiReply.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</Say><Record action="${SERVER_URL}/process-speech/${callSid}" maxLength="8" playBeep="false" trim="trim-silence" recordingStatusCallback="${SERVER_URL}/recording/${callSid}"/></Response>`
+      twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${aiReply.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</Say><Record action="${SERVER_URL}/process-speech/${callSid}" maxLength="8" playBeep="false" trim="trim-silence" recordingStatusCallback="${SERVER_URL}/recording/${callSid}" recordingStatusCallbackEvent="completed"/></Response>`
     });
 
   } catch(err) {
@@ -584,7 +584,8 @@ app.post("/incoming-call", async (req, res) => {
     maxLength:                8,
     playBeep:                 false,
     trim:                     "trim-silence",
-    recordingStatusCallback:  `${SERVER_URL}/recording/${callSid}`,
+    recordingStatusCallback:       `${SERVER_URL}/recording/${callSid}`,
+    recordingStatusCallbackEvent:  ["completed"],
   });
 
   res.type("text/xml").send(twiml.toString());
