@@ -315,6 +315,154 @@ const CLIENT_CONFIGS = {
 // ── Active call sessions (in production, use Redis) ──────────
 const CALL_SESSIONS = new Map();
 
+
+// ============================================================
+//  DEMO CONFIGS — swap Aria's persona for sales demos
+// ============================================================
+const DEMO_CONFIGS = {
+  dental: {
+    businessName:  "Bright Smile Dental",
+    ownerPhone:    process.env.NOTIFY_PHONE || process.env.TWILIO_PHONE_NUMBER,
+    greeting:      "Thank you for calling Bright Smile Dental! I'm Aria, your virtual receptionist. Are you a new or existing patient?",
+    businessType:  "dental",
+    faqs: [
+      { q: "insurance",        a: "We accept Delta Dental, Cigna, Aetna, BlueCross, and most major PPO plans. We also offer flexible payment plans." },
+      { q: "hours",            a: "We're open Monday through Friday 8am to 5pm, and Saturdays from 9am to 1pm." },
+      { q: "new patient",      a: "We're always welcoming new patients! I can schedule a new patient exam which includes X-rays and a cleaning." },
+      { q: "emergency",        a: "We do see dental emergencies. If you're in pain, I'll make sure we get you in as soon as possible." },
+      { q: "cost",             a: "Costs vary by procedure. With insurance, most routine visits are fully covered. I can have our billing team call you with specifics." },
+    ],
+    appointmentQuestions: ["What's your name?", "What's the best callback number?", "Are you a new or existing patient?", "What's the reason for your visit today?"],
+  },
+  medspa: {
+    businessName:  "Luxe Med Spa",
+    ownerPhone:    process.env.NOTIFY_PHONE || process.env.TWILIO_PHONE_NUMBER,
+    greeting:      "Thank you for calling Luxe Med Spa! I'm Aria. Are you calling to book a consultation or do you have a question about our services?",
+    businessType:  "medspa",
+    faqs: [
+      { q: "botox",            a: "Yes, we offer Botox starting at $12 per unit. Most treatment areas require 20 to 40 units. We'd love to schedule a free consultation." },
+      { q: "filler",           a: "We offer a full range of dermal fillers including Juvederm and Restylane. Consultations are complimentary." },
+      { q: "hours",            a: "We're open Tuesday through Saturday 9am to 6pm." },
+      { q: "price",            a: "Pricing depends on the treatment. We offer free consultations so you can get an exact quote. Want me to book one for you?" },
+      { q: "membership",       a: "Yes! Our monthly membership starts at $199 and includes discounts on all services plus one free treatment per month." },
+    ],
+    appointmentQuestions: ["What's your name?", "What's the best number to reach you?", "Which service are you interested in?", "Have you visited us before?"],
+  },
+  roofing: {
+    businessName:  "Premier Roofing Co.",
+    ownerPhone:    process.env.NOTIFY_PHONE || process.env.TWILIO_PHONE_NUMBER,
+    greeting:      "Thanks for calling Premier Roofing! I'm Aria. Are you calling about a repair, a new roof, or storm damage?",
+    businessType:  "roofing",
+    faqs: [
+      { q: "cost",             a: "Roofing costs depend on the size and materials. Most residential roofs run between $8,000 and $20,000. We offer free inspections and estimates." },
+      { q: "insurance",        a: "Absolutely — we work with all major insurance companies and can help you through the claims process at no extra charge." },
+      { q: "how long",         a: "Most full roof replacements take 1 to 2 days. Repairs are often same-day or next-day." },
+      { q: "warranty",         a: "We offer a 10-year workmanship warranty on all installations, plus manufacturer warranties on materials." },
+      { q: "free inspection",  a: "Yes! We offer completely free roof inspections. I can get you scheduled with one of our inspectors." },
+    ],
+    appointmentQuestions: ["What's your name?", "What's your callback number?", "What's the address of the property?", "Are you dealing with storm damage or a general inspection?"],
+  },
+  law: {
+    businessName:  "Mitchell & Associates Law",
+    ownerPhone:    process.env.NOTIFY_PHONE || process.env.TWILIO_PHONE_NUMBER,
+    greeting:      "Thank you for calling Mitchell and Associates. I'm Aria, the virtual intake assistant. How can I help you today?",
+    businessType:  "law",
+    faqs: [
+      { q: "practice areas",   a: "We handle personal injury, family law, employment disputes, and estate planning." },
+      { q: "free consultation", a: "Yes, we offer a free 30-minute initial consultation for all new clients." },
+      { q: "cost",             a: "Our fees vary by case type. Personal injury cases are handled on contingency — no fees unless we win." },
+      { q: "location",         a: "We're located in downtown Atlanta. We also offer phone and video consultations for your convenience." },
+    ],
+    appointmentQuestions: ["What's your name?", "What's your contact number?", "What type of legal matter are you calling about?", "Have you worked with our firm before?"],
+  },
+  restaurant: {
+    businessName:  "The Golden Fork",
+    ownerPhone:    process.env.NOTIFY_PHONE || process.env.TWILIO_PHONE_NUMBER,
+    greeting:      "Thank you for calling The Golden Fork! I'm Aria. Are you calling to make a reservation or do you have a question?",
+    businessType:  "restaurant",
+    faqs: [
+      { q: "hours",            a: "We're open Tuesday through Sunday. Lunch is 11am to 3pm, dinner is 5pm to 10pm. We're closed Mondays." },
+      { q: "reservation",      a: "I'd love to help you with a reservation! I just need a few details." },
+      { q: "menu",             a: "We specialize in contemporary American cuisine with locally sourced ingredients. Our menu changes seasonally." },
+      { q: "parking",          a: "We have a private lot behind the restaurant with free parking for guests." },
+      { q: "private event",    a: "Yes, we have a private dining room that seats up to 40 guests. I can have our events coordinator reach out to you." },
+    ],
+    appointmentQuestions: ["What's your name?", "What's your contact number?", "What date and time were you thinking?", "How many guests will be joining you?"],
+  },
+};
+
+// Active demo config (null = use real CLIENT_CONFIGS)
+let activeDemoConfig = null;
+let demoExpiry = null;
+
+// ── GET /demo — show demo control panel ──────────────────────
+app.get("/demo", (req, res) => {
+  const industries = Object.keys(DEMO_CONFIGS);
+  const active = activeDemoConfig ? activeDemoConfig.businessName : "None (using real config)";
+  const timeLeft = demoExpiry ? Math.max(0, Math.round((demoExpiry - Date.now()) / 60000)) : 0;
+
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Aria Demo Control Panel</title>
+      <style>
+        body { font-family: monospace; background: #020408; color: #00ffe5; padding: 40px; }
+        h1 { font-size: 24px; margin-bottom: 8px; }
+        .status { background: rgba(0,255,229,.08); border: 1px solid rgba(0,255,229,.2); padding: 20px; border-radius: 8px; margin: 20px 0; }
+        .btn { display: inline-block; padding: 12px 24px; margin: 8px; background: #00ffe5; color: #020408; border: none; border-radius: 4px; font-family: monospace; font-size: 14px; font-weight: bold; cursor: pointer; text-decoration: none; }
+        .btn:hover { background: #00fff2; }
+        .btn-off { background: rgba(255,64,96,.2); color: #ff4060; border: 1px solid rgba(255,64,96,.3); }
+        .btn-off:hover { background: rgba(255,64,96,.3); }
+        .number { font-size: 28px; color: #fff; margin: 10px 0; }
+        p { color: rgba(216,240,236,.6); margin: 6px 0; }
+      </style>
+    </head>
+    <body>
+      <h1>🎯 Aria Demo Control Panel</h1>
+      <p>Use this to swap Aria's persona before a sales demo call.</p>
+
+      <div class="status">
+        <p>ACTIVE PERSONA</p>
+        <div class="number">${active}</div>
+        <p>${activeDemoConfig ? "Demo expires in " + timeLeft + " minutes" : "Call your Twilio number to test the current config"}</p>
+        <div class="number" style="font-size:18px">📞 ${process.env.TWILIO_PHONE_NUMBER || "+18339686657"}</div>
+      </div>
+
+      <p style="margin-bottom:12px; font-size:16px;">SELECT DEMO PERSONA:</p>
+      ${industries.map(ind => `
+        <a href="/demo/activate/${ind}" class="btn">${DEMO_CONFIGS[ind].businessName}</a>
+      `).join('')}
+      <br><br>
+      <a href="/demo/deactivate" class="btn btn-off">❌ Deactivate Demo Mode</a>
+
+      <br><br>
+      <p style="opacity:.5">Demo mode lasts 30 minutes then resets automatically.</p>
+    </body>
+    </html>
+  `);
+});
+
+// ── GET /demo/activate/:industry ─────────────────────────────
+app.get("/demo/activate/:industry", (req, res) => {
+  const industry = req.params.industry;
+  if (!DEMO_CONFIGS[industry]) {
+    return res.status(404).send("Demo config not found for: " + industry);
+  }
+  activeDemoConfig = DEMO_CONFIGS[industry];
+  demoExpiry = Date.now() + 30 * 60 * 1000; // 30 min
+  console.log("🎯 Demo mode activated:", activeDemoConfig.businessName);
+  res.redirect("/demo");
+});
+
+// ── GET /demo/deactivate ─────────────────────────────────────
+app.get("/demo/deactivate", (req, res) => {
+  activeDemoConfig = null;
+  demoExpiry = null;
+  console.log("Demo mode deactivated");
+  res.redirect("/demo");
+});
+
 // ============================================================
 //  POST /incoming-call
 //  Twilio hits this when someone calls a client's Aria number
@@ -324,7 +472,8 @@ app.post("/incoming-call", async (req, res) => {
   const callSid  = req.body.CallSid || req.query.CallSid || ("call_" + Date.now());
   const toNumber = req.body.To || req.query.To || process.env.TWILIO_PHONE_NUMBER;
 
-  const config = CLIENT_CONFIGS[toNumber] || getDefaultConfig();
+  // Use demo config if active, otherwise use client config
+  const config = (activeDemoConfig && demoExpiry > Date.now()) ? activeDemoConfig : (CLIENT_CONFIGS[toNumber] || getDefaultConfig());
 
   // Initialize session for this call
   CALL_SESSIONS.set(callSid, {
