@@ -498,10 +498,10 @@ app.post("/incoming-call", async (req, res) => {
   twiml.gather({
     input:         "speech",
     action:        `${SERVER_URL}/process-speech/${callSid}`,
-    speechTimeout: "auto",
-    timeout:       5,
+    speechTimeout: 3,
+    timeout:       15,
     language:      "en-US",
-    hints:         "appointment, booking, question, new patient, existing patient, emergency",
+    hints:         "appointment, booking, question, new patient, existing patient, emergency, yes, no, hello",
   });
 
   res.type("text/xml").send(twiml.toString());
@@ -533,8 +533,8 @@ app.post("/process-speech/:callSid", async (req, res) => {
     twiml2.gather({
       input:         "speech",
       action:        `${SERVER_URL}/process-speech/${callSid}`,
-      speechTimeout: "auto",
-      timeout:       5,
+      speechTimeout: 3,
+      timeout:       15,
       language:      "en-US",
     });
     return res.type("text/xml").send(twiml2.toString());
