@@ -25,6 +25,7 @@ app.use(express.json());
 
 const SERVER_URL = process.env.SERVER_URL || "https://web-production-46fe1e.up.railway.app";
 
+app.post("/noop", (req, res) => { res.type("text/xml").send("<Response></Response>"); });
 app.get("/health", (req, res) => res.json({ status: "ok", stripe: "live", twilio: "live" }));
 app.get("/", (req, res) => res.json({ status: "Converta.AI server running" }));
 
@@ -475,9 +476,9 @@ app.get("/demo/deactivate", (req, res) => {
 // ── POST /recording/:callSid — Twilio sends recording URL here ──
 app.post("/recording/:callSid", async (req, res) => {
   const callSid       = req.params.callSid;
+  console.log(`🎙 FULL recording body for ${callSid}:`, JSON.stringify(req.body));
   const recordingUrl  = req.body.RecordingUrl;
   const recordingSid  = req.body.RecordingSid;
-  console.log(`🎙 Recording received for ${callSid}: ${recordingUrl}`);
 
   const session = CALL_SESSIONS.get(callSid);
   if (!session || !recordingUrl) return res.sendStatus(200);
@@ -580,10 +581,10 @@ app.post("/incoming-call", async (req, res) => {
 
   // Gather speech
   twiml.record({
-    action:                   `${SERVER_URL}/process-speech/${callSid}`,
-    maxLength:                8,
-    playBeep:                 false,
-    trim:                     "trim-silence",
+    action:                        `${SERVER_URL}/noop`,
+    maxLength:                     8,
+    playBeep:                      false,
+    trim:                          "trim-silence",
     recordingStatusCallback:       `${SERVER_URL}/recording/${callSid}`,
     recordingStatusCallbackEvent:  ["completed"],
   });
@@ -932,6 +933,7 @@ app.post("/provision-number", async (req, res) => {
 //  GET /health — simple health check
 // ============================================================
 
+app.post("/noop", (req, res) => { res.type("text/xml").send("<Response></Response>"); });
 app.get("/health", (req, res) => {
   res.json({
     status:  "ok",
