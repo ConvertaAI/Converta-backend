@@ -581,10 +581,12 @@ app.post("/incoming-call", async (req, res) => {
 
   // Gather speech
   twiml.record({
-    action:    `${SERVER_URL}/process-speech/${callSid}`,
-    maxLength: 8,
-    playBeep:  false,
-    trim:      "trim-silence",
+    action:        `${SERVER_URL}/process-speech/${callSid}`,
+    maxLength:     15,
+    timeout:       3,
+    playBeep:      false,
+    trim:          "trim-silence",
+    finishOnKey:   "#",
   });
 
   res.type("text/xml").send(twiml.toString());
@@ -641,7 +643,7 @@ app.post("/process-speech/:callSid", async (req, res) => {
 
       if (!transcription) {
         await client.calls(callSid).update({
-          twiml: `<Response><Say voice="Polly.Joanna-Neural">I didn't catch that, could you repeat?</Say><Record action="${SERVER_URL}/process-speech/${callSid}" maxLength="8" playBeep="false" trim="trim-silence"/></Response>`
+          twiml: `<Response><Say voice="Polly.Joanna-Neural">I didn't catch that, could you repeat?</Say><Record action="${SERVER_URL}/process-speech/${callSid}" maxLength="15" timeout="3" playBeep="false" trim="trim-silence" finishOnKey="#"/></Response>`
         });
         return;
       }
@@ -666,7 +668,7 @@ app.post("/process-speech/:callSid", async (req, res) => {
 
       const safeReply = aiReply.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;");
       await client.calls(callSid).update({
-        twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safeReply}</Say><Record action="${SERVER_URL}/process-speech/${callSid}" maxLength="8" playBeep="false" trim="trim-silence"/></Response>`
+        twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safeReply}</Say><Record action="${SERVER_URL}/process-speech/${callSid}" maxLength="15" timeout="3" playBeep="false" trim="trim-silence" finishOnKey="#"/></Response>`
       });
 
     } catch(err) {
