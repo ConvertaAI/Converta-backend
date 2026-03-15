@@ -151,6 +151,22 @@ function getDefaultConfig() {
   };
 }
 
+
+// ── POST /call-status — fires when call ends for ANY reason (hangup, customer disconnect, etc.)
+app.post("/call-status", async (req, res) => {
+  const callSid    = req.body.CallSid;
+  const callStatus = req.body.CallStatus;
+  console.log(`📵 Call ${callSid} ended with status: ${callStatus}`);
+
+  const session = CALL_SESSIONS.get(callSid);
+  if (session && session.messages.length > 0) {
+    // Only notify if we actually had a conversation
+    await saveLeadAndNotify(session, callSid);
+    CALL_SESSIONS.delete(callSid);
+  }
+  res.sendStatus(200);
+});
+
 // ============================================================
 //  INCOMING CALL — Start Media Stream
 // ============================================================
@@ -173,6 +189,7 @@ app.post("/incoming-call", (req, res) => {
   const twiml = new VoiceResponse();
   twiml.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, config.greeting);
 
+  twiml.say; // status callback set on number level
   const connect = twiml.connect();
   const stream  = connect.stream({ url: `wss://${SERVER_URL.replace("https://", "")}/media-stream` });
   stream.parameter({ name: "callSid", value: callSid });
