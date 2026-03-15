@@ -561,7 +561,7 @@ app.post("/process-speech/:callSid", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Claude API error:", err.message);
+    console.error("Claude API error FULL:", JSON.stringify(err));
     twiml.say({ voice: "Polly.Joanna-Neural" },
       "I apologize for the trouble. Let me take your name and number so our team can call you right back."
     );
@@ -601,7 +601,7 @@ Name: ${session.leadData.name || "not yet captured"}
 Reason: ${session.leadData.reason || "not yet captured"}`;
 
   const response = await anthropic.messages.create({
-    model:      "claude-sonnet-4-20250514",
+    model:      "claude-sonnet-4-5",
     max_tokens: 150,
     system:     systemPrompt,
     messages:   messages,
