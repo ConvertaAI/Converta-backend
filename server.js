@@ -647,7 +647,7 @@ app.post("/process-speech/:callSid", async (req, res) => {
 
       if (!transcription) {
         twiml.say({ voice: "Polly.Joanna-Neural" }, "I didn't catch that, could you say that again?");
-        twiml.record({ action: `${SERVER_URL}/process-speech/${callSid}`, maxLength: 15, timeout: 3, playBeep: false, trim: "trim-silence" });
+        twiml.record({ action: `${SERVER_URL}/process-speech/${callSid}`, maxLength: 8, timeout: 3, playBeep: false, trim: "trim-silence" });
         return res.type("text/xml").send(twiml.toString());
       }
 
@@ -669,7 +669,7 @@ app.post("/process-speech/:callSid", async (req, res) => {
       console.log(`🤖 Aria: "${aiReply}"`);
 
       twiml.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, aiReply);
-      twiml.record({ action: `${SERVER_URL}/process-speech/${callSid}`, maxLength: 15, timeout: 3, playBeep: false, trim: "trim-silence" });
+      twiml.record({ action: `${SERVER_URL}/process-speech/${callSid}`, maxLength: 8, timeout: 3, playBeep: false, trim: "trim-silence" });
       return res.type("text/xml").send(twiml.toString());
 
     } catch(err) {
@@ -682,7 +682,7 @@ app.post("/process-speech/:callSid", async (req, res) => {
 
   // No recording URL - ask to speak
   twiml.say({ voice: "Polly.Joanna-Neural" }, "I didn't catch that, could you please repeat?");
-  twiml.record({ action: `${SERVER_URL}/process-speech/${callSid}`, maxLength: 15, timeout: 3, playBeep: false, trim: "trim-silence" });
+  twiml.record({ action: `${SERVER_URL}/process-speech/${callSid}`, maxLength: 8, timeout: 3, playBeep: false, trim: "trim-silence" });
   return res.type("text/xml").send(twiml.toString());
 
   const transcription = ""; // legacy fallback
@@ -768,20 +768,18 @@ FAQ ANSWERS — use these exactly when relevant:
 ${config.faqs.map(f => `- If they ask about "${f.q}": ${f.a}`).join("\n")}
 
 RULES:
-- Keep every response to 1-2 SHORT sentences — this is a phone call, not a chat
-- Sound natural and warm, never robotic
-- Never make up information not in the FAQs
-- If you don't know something, say "Our team will be able to help with that when they call you back"
-- If it sounds urgent (pain, emergency, broken pipe, etc.), say you're flagging it as urgent
-- When you have their name and reason, confirm it and say the team will call back shortly
+- Max 1 SHORT sentence per response — phone call only
+- Warm and natural
+- Never make up info
+- Get name and reason ASAP then wrap up
 
 Current lead data captured so far:
 Name: ${session.leadData.name || "not yet captured"}
 Reason: ${session.leadData.reason || "not yet captured"}`;
 
   const response = await anthropic.messages.create({
-    model:      "claude-sonnet-4-5",
-    max_tokens: 150,
+    model:      "claude-haiku-4-5-20251001",
+    max_tokens: 80,
     system:     systemPrompt,
     messages:   messages,
   });
