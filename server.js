@@ -11,16 +11,26 @@ const stripe      = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const twilio      = require("twilio");
 const Anthropic   = require("@anthropic-ai/sdk");
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
-const nodemailer  = require("nodemailer");
 const fetch       = require("node-fetch");
 
-const mailer = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.NOTIFY_EMAIL,
-    pass: process.env.GMAIL_APP_PASSWORD
-  }
-});
+async function sendEmail({ to, subject, html }) {
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${process.env.RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: "Converta.AI <onboarding@resend.dev>",
+      to,
+      subject,
+      html
+    })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(JSON.stringify(data));
+  return data;
+}
 
 const app         = express();
 const server      = http.createServer(app);
@@ -417,10 +427,9 @@ async function saveLeadAndNotify(session, callSid) {
 
   // Email to business owner
   const ownerEmail = config.ownerEmail || process.env.NOTIFY_EMAIL;
-  if (ownerEmail && process.env.GMAIL_APP_PASSWORD) {
+  if (ownerEmail && process.env.RESEND_API_KEY) {
     try {
-      await mailer.sendMail({
-        from: `"Converta.AI" <${process.env.NOTIFY_EMAIL}>`,
+      await sendEmail({
         to: ownerEmail,
         subject: `📞 New Lead: ${leadData.name || "Unknown"} called ${config.businessName}`,
         html: `
@@ -451,7 +460,7 @@ async function saveLeadAndNotify(session, callSid) {
       console.error("Email error FULL:", e);
     }
   } else {
-    console.error("Email skipped — ownerEmail:", ownerEmail, "GMAIL_APP_PASSWORD:", !!process.env.GMAIL_APP_PASSWORD);
+    console.error("Email skipped — ownerEmail:", ownerEmail, "RESEND_API_KEY set:", !!process.env.RESEND_API_KEY);
   }
 }
 
