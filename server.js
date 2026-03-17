@@ -180,31 +180,44 @@ app.post("/call-status", async (req, res) => {
 // ============================================================
 //  INCOMING CALL — Start Media Stream
 // ============================================================
-app.post("/incoming-call", (req, res) => {
-  const callSid  = req.body.CallSid || ("call_" + Date.now());
-  const toNumber = req.body.To || process.env.TWILIO_PHONE_NUMBER;
-  const config   = (activeDemoConfig && demoExpiry > Date.now()) ? activeDemoConfig : (CLIENT_CONFIGS[toNumber] || getDefaultConfig());
+app.post("/incoming-call", async (req, res) => {
+  const callSid    = req.body.CallSid || ("call_" + Date.now());
+  const toNumber   = req.body.To || process.env.TWILIO_PHONE_NUMBER;
+  const fromNumber = req.body.From || "unknown";
+  const config     = (activeDemoConfig && demoExpiry > Date.now()) ? activeDemoConfig : (CLIENT_CONFIGS[toNumber] || getDefaultConfig());
 
-  console.log(`📞 Incoming call to ${toNumber} (${config.businessName})`);
+  console.log(`📞 Incoming call to ${toNumber} (${config.businessName}) from ${fromNumber}`);
 
   CALL_SESSIONS.set(callSid, {
     config,
-    messages:  [],
-    leadData:  { name: null, phone: req.body.From, reason: null },
-    turnCount: 0,
-    startTime: Date.now(),
+    messages:   [],
+    leadData:   { name: null, phone: fromNumber, reason: null },
+    turnCount:  0,
+    startTime:  Date.now(),
     transcript: "",
+    notified:   false,
   });
+
+  // Register status callback so email fires when call ends for ANY reason
+  try {
+    await client.calls(callSid).update({
+      statusCallback:       `${SERVER_URL}/call-status`,
+      statusCallbackMethod: "POST",
+      statusCallbackEvent:  ["completed"],
+    });
+  } catch(e) {
+    console.log("Status callback registration:", e.message);
+  }
 
   const twiml = new VoiceResponse();
   twiml.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, config.greeting);
 
-  twiml.say; // status callback set on number level
   const connect = twiml.connect();
   const stream  = connect.stream({ url: `wss://${SERVER_URL.replace("https://", "")}/media-stream` });
   stream.parameter({ name: "callSid", value: callSid });
 
-  res.type("text/xml").send(twiml.toString());
+  res.set("Content-Type", "text/xml");
+  res.send(twiml.toString());
 });
 
 // ============================================================
