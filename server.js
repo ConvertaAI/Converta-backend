@@ -298,10 +298,13 @@ wss.on("connection", (ws) => {
               const safeReply = reply.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
               if (isClosing) {
-                // Say goodbye and hang up - do NOT reconnect stream
+                // Say goodbye and hang up
                 await client.calls(callSid).update({
                   twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safeReply}</Say><Pause length="1"/><Hangup/></Response>`
                 });
+                // Close WebSocket to stop stream reconnecting
+                if (dgConnection) { try { dgConnection.finish(); } catch(e){} }
+                setTimeout(() => { try { ws.close(); } catch(e){} }, 3000);
               } else {
                 // Continue conversation - reconnect stream
                 await client.calls(callSid).update({
@@ -381,12 +384,15 @@ Already captured: Name=${session.leadData.name||"not yet"} Phone=${session.leadD
 function extractLeadData(session, text) {
   const lower = text.toLowerCase();
   if (!session.leadData.name) {
-    const m = text.match(/(?:my name is|i'm|i am|it's|this is)\s+([A-Z][a-z]+ ?[A-Z]?[a-z]*)/i);
-    if (m) session.leadData.name = m[1];
+    // Try formal intro first
+    const m = text.match(/(?:my name is|i'm|i am|it's|this is|name's)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
+    if (m) session.leadData.name = m[1].trim();
   }
   if (!session.leadData.reason) {
-    const reasons = ["appointment","checkup","cleaning","pain","emergency","question","quote","consultation","inspection","reservation","booking"];
+    const reasons = ["appointment","checkup","cleaning","pain","emergency","question","quote","consultation","inspection","reservation","booking","table","dinner","lunch","party","group"];
     for (const r of reasons) if (lower.includes(r)) { session.leadData.reason = r; break; }
+    // Fallback — use first 60 chars of what they said as reason
+    if (!session.leadData.reason && text.length > 5) session.leadData.reason = text.slice(0, 60);
   }
 }
 
@@ -442,8 +448,10 @@ async function saveLeadAndNotify(session, callSid) {
       });
       console.log(`📧 Lead email sent to ${ownerEmail}`);
     } catch(e) {
-      console.error("Email error:", e.message);
+      console.error("Email error FULL:", e);
     }
+  } else {
+    console.error("Email skipped — ownerEmail:", ownerEmail, "GMAIL_APP_PASSWORD:", !!process.env.GMAIL_APP_PASSWORD);
   }
 }
 
