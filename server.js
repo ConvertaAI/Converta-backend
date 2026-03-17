@@ -284,7 +284,7 @@ wss.on("connection", (ws) => {
               let reply;
               let isClosing = false;
 
-              if (session.turnCount >= 8 || hasEnoughLeadInfo(session.leadData)) {
+              if (session.turnCount >= 12 || hasEnoughLeadInfo(session.leadData)) {
                 reply = await getClosingMessage(session);
                 isClosing = true;
                 session.notified = true; // mark so call-status doesn't double-send
@@ -346,15 +346,32 @@ wss.on("connection", (ws) => {
 // ============================================================
 async function getAriaResponse(session, latestInput) {
   const { config, messages } = session;
-  const systemPrompt = `You are Aria, a warm AI phone receptionist for ${config.businessName}.
-GOALS: 1) Get caller's name and phone 2) Understand why they're calling 3) Answer FAQs 4) Book if needed
-FAQs: ${config.faqs.map(f => `Q: ${f.q} → A: ${f.a}`).join(" | ")}
-RULES: Max 1 SHORT sentence. Warm and natural. Get name+reason then wrap up.
-Captured: Name=${session.leadData.name||"unknown"} Reason=${session.leadData.reason||"unknown"}`;
+  const faqs = config.faqs && config.faqs.length
+    ? config.faqs.map(f => `Q: ${f.q} → A: ${f.a}`).join(" | ")
+    : "None";
+  const questions = config.appointmentQuestions && config.appointmentQuestions.length
+    ? config.appointmentQuestions.join(", ")
+    : "name, callback number, reason for call";
+
+  const systemPrompt = `You are Aria, a friendly AI phone receptionist for ${config.businessName}.
+
+YOUR JOB: Have a natural phone conversation. Collect the caller's info one question at a time.
+INFO TO COLLECT: ${questions}
+FAQs YOU CAN ANSWER: ${faqs}
+
+RULES:
+- Ask ONE question at a time — never ask multiple things at once
+- Keep each response to 1-2 SHORT sentences max
+- Sound warm and natural, not robotic
+- Answer FAQs directly when asked
+- Once you have collected ALL required info, confirm it back to the caller and let them know the team will be in touch
+- Do NOT wrap up until you have collected all the required info above
+
+Already captured: Name=${session.leadData.name||"not yet"} Phone=${session.leadData.phone||"not yet"} Reason=${session.leadData.reason||"not yet"}`;
 
   const response = await anthropic.messages.create({
     model:      "claude-haiku-4-5-20251001",
-    max_tokens: 80,
+    max_tokens: 100,
     system:     systemPrompt,
     messages:   messages,
   });
@@ -373,7 +390,7 @@ function extractLeadData(session, text) {
   }
 }
 
-function hasEnoughLeadInfo(ld) { return (ld.name || ld.phone) && ld.reason; }
+function hasEnoughLeadInfo(ld) { return ld.name && ld.reason && ld.phone; }
 
 async function getClosingMessage(session) {
   const name = session.leadData.name ? session.leadData.name.split(" ")[0] : null;
@@ -385,6 +402,9 @@ async function saveLeadAndNotify(session, callSid) {
   const { config, leadData, messages, startTime } = session;
   const duration = Math.round((Date.now() - startTime) / 1000);
   console.log(`✅ Lead saved: ${JSON.stringify(leadData)} for ${config.businessName}`);
+  console.log(`📧 Attempting email to: ${config.ownerEmail || process.env.NOTIFY_EMAIL}`);
+  console.log(`📧 GMAIL_APP_PASSWORD set: ${!!process.env.GMAIL_APP_PASSWORD}`);
+  console.log(`📧 NOTIFY_EMAIL set: ${!!process.env.NOTIFY_EMAIL}`);
 
   // Build transcript
   const transcript = messages.map(m => `${m.role === "user" ? "Caller" : "Aria"}: ${m.content}`).join("\n");
