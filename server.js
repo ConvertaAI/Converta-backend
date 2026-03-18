@@ -238,135 +238,128 @@ app.post("/incoming-call", async (req, res) => {
 // ============================================================
 wss.on("connection", (ws) => {
   console.log("🔌 WebSocket connected");
-  let callSid        = null;
-  let dgConnection   = null;
-  let finalTranscript = "";
-  let silenceTimer   = null;
-  let isProcessing   = false;
+  let callSid         = null;
+  let dgConnection    = null;
+  let transcript      = "";
+  let silenceTimer    = null;
+  let busy            = false; // prevents double-processing
 
-  ws.on("message", async (data) => {
-    const msg = JSON.parse(data);
+  async function processTranscript(text, sid) {
+    if (busy || !text) return;
+    busy = true;
+
+    const session = CALL_SESSIONS.get(sid);
+    if (!session) { busy = false; return; }
+
+    try {
+      session.messages.push({ role: "user", content: text });
+      session.turnCount++;
+      extractLeadData(session, text);
+      console.log(`👤 Turn ${session.turnCount}: "${text}"`);
+
+      const closing = session.turnCount >= 12 || hasEnoughLeadInfo(session.leadData);
+      let reply;
+
+      if (closing) {
+        reply = await getClosingMessage(session);
+        session.messages.push({ role: "assistant", content: reply });
+        session.notified = true;
+      } else {
+        reply = await getAriaResponse(session, text);
+        session.messages.push({ role: "assistant", content: reply });
+      }
+
+      console.log(`🤖 Aria (turn ${session.turnCount}): "${reply}"`);
+      const safe = reply.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+      if (closing) {
+        await client.calls(sid).update({
+          twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safe}</Say><Pause length="2"/><Hangup/></Response>`
+        });
+        if (dgConnection) { try { dgConnection.finish(); } catch(e){} }
+        setTimeout(async () => {
+          try { await client.calls(sid).update({ status: "completed" }); } catch(e){}
+          try { ws.close(); } catch(e){}
+        }, 14000);
+      } else {
+        await client.calls(sid).update({
+          twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safe}</Say><Connect><Stream url="wss://${SERVER_URL.replace("https://","")}/media-stream"><Parameter name="callSid" value="${sid}"/></Stream></Connect></Response>`
+        });
+        // Hold busy for 3s to prevent re-processing on stream reconnect
+        setTimeout(() => { busy = false; }, 3000);
+        return;
+      }
+    } catch(err) {
+      console.error("Process error:", err.message);
+    }
+    busy = false;
+  }
+
+  ws.on("message", async (rawData) => {
+    let msg;
+    try { msg = JSON.parse(rawData); } catch(e) { return; }
 
     if (msg.event === "start") {
-      callSid = msg.start.customParameters?.callSid || msg.start.callSid;
-      console.log(`🎙 Stream started for ${callSid}`);
-      // Reset processing flag on new stream so conversation continues
-      isProcessing = false;
-      finalTranscript = "";
+      const newCallSid = msg.start.customParameters?.callSid || msg.start.callSid;
 
-      // Connect to Deepgram real-time transcription
+      // If same call reconnecting (stream restart after Aria speaks) — just reset Deepgram
+      if (newCallSid === callSid) {
+        console.log(`🔄 Stream reconnected for ${callSid} — turn ${CALL_SESSIONS.get(callSid)?.turnCount || 0}`);
+        transcript = "";
+        if (dgConnection) { try { dgConnection.finish(); } catch(e){} }
+      } else {
+        callSid = newCallSid;
+        console.log(`🎙 New stream for ${callSid}`);
+      }
+
       dgConnection = deepgram.listen.live({
         model:           "nova-2-phonecall",
         language:        "en-US",
         smart_format:    true,
         interim_results: true,
-        endpointing:     500,
+        endpointing:     600,
         encoding:        "mulaw",
         sample_rate:     8000,
         channels:        1,
       });
 
-      dgConnection.on(LiveTranscriptionEvents.Open, () => {
-        console.log("🟢 Deepgram connected");
-      });
+      dgConnection.on(LiveTranscriptionEvents.Open, () => console.log("🟢 Deepgram ready"));
 
-      dgConnection.on(LiveTranscriptionEvents.Transcript, async (data) => {
+      dgConnection.on(LiveTranscriptionEvents.Transcript, (data) => {
         const alt = data.channel?.alternatives?.[0];
-        if (!alt || !alt.transcript) return;
-
+        if (!alt?.transcript?.trim()) return;
         const text = alt.transcript.trim();
-        if (!text) return;
+        if (!data.is_final) return;
 
-        if (data.is_final) {
-          finalTranscript += " " + text;
-          console.log(`📝 Final: "${text}"`);
+        transcript += " " + text;
+        console.log(`📝 "${text}"`);
 
-          // Reset silence timer on each final transcript
-          clearTimeout(silenceTimer);
-          silenceTimer = setTimeout(async () => {
-            const fullText = finalTranscript.trim();
-            finalTranscript = "";
-            if (!fullText || isProcessing) return;
-            isProcessing = true;
-
-            const session = CALL_SESSIONS.get(callSid);
-            if (!session) { isProcessing = false; return; }
-
-            try {
-              session.messages.push({ role: "user", content: fullText });
-              session.turnCount++;
-              extractLeadData(session, fullText);
-
-              let reply;
-              let isClosing = false;
-
-              if (session.turnCount >= 12 || hasEnoughLeadInfo(session.leadData)) {
-                reply = await getClosingMessage(session);
-                isClosing = true;
-                session.notified = true; // mark so call-status doesn't double-send
-              } else {
-                reply = await getAriaResponse(session, fullText);
-                session.messages.push({ role: "assistant", content: reply });
-              }
-
-              console.log(`🤖 Aria: "${reply}"`);
-
-              const safeReply = reply.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-
-              if (isClosing) {
-                // Say goodbye then hang up via REST API after a delay
-                await client.calls(callSid).update({
-                  twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safeReply}</Say><Pause length="1"/><Hangup/></Response>`
-                });
-                // Stop Deepgram so we don't keep transcribing
-                if (dgConnection) { try { dgConnection.finish(); } catch(e){} }
-                // Wait for Aria to finish speaking, then end call
-                setTimeout(async () => {
-                  try {
-                    await client.calls(callSid).update({ status: "completed" });
-                    console.log(`📵 Force ended call ${callSid}`);
-                  } catch(e) { /* call may already be ended */ }
-                  try { ws.close(); } catch(e) {}
-                }, 12000);
-              } else {
-                // Speak reply then reconnect the stream with same callSid
-                await client.calls(callSid).update({
-                  twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safeReply}</Say><Connect><Stream url="wss://${SERVER_URL.replace("https://","")}/media-stream"><Parameter name="callSid" value="${callSid}"/></Stream></Connect></Response>`
-                });
-                // Keep isProcessing true for 2s to prevent double-processing on reconnect
-                setTimeout(() => { isProcessing = false; }, 2000);
-                return; // Don't reset isProcessing below
-              }
-
-            } catch(err) {
-              console.error("Processing error:", err.message);
-            }
-            if (!isProcessing) isProcessing = false;
-          }, 1000); // Wait 1000ms of silence before processing
-        }
+        clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => {
+          const full = transcript.trim();
+          transcript = "";
+          if (full && !busy) processTranscript(full, callSid);
+        }, 800);
       });
 
-      dgConnection.on(LiveTranscriptionEvents.Error, (err) => {
-        console.error("Deepgram error:", err);
-      });
+      dgConnection.on(LiveTranscriptionEvents.Error, (e) => console.error("Deepgram error:", e));
     }
 
     if (msg.event === "media" && dgConnection) {
-      const audio = Buffer.from(msg.media.payload, "base64");
-      dgConnection.send(audio);
+      try { dgConnection.send(Buffer.from(msg.media.payload, "base64")); } catch(e){}
     }
 
     if (msg.event === "stop") {
-      console.log(`🔴 Stream stopped for ${callSid}`);
       clearTimeout(silenceTimer);
       if (dgConnection) { try { dgConnection.finish(); } catch(e){} }
+      console.log(`🔴 Stream stopped for ${callSid}`);
     }
   });
 
   ws.on("close", () => {
     clearTimeout(silenceTimer);
     if (dgConnection) { try { dgConnection.finish(); } catch(e){} }
-    console.log("🔌 WebSocket disconnected");
+    console.log("🔌 WebSocket closed");
   });
 });
 
@@ -384,27 +377,30 @@ async function getAriaResponse(session, latestInput) {
     ? config.appointmentQuestions
     : ["What's your name?", "What's the best number to reach you?", "How can we help you today?"];
 
-  // Figure out which questions still need answers based on conversation
-  const askedCount = session.messages.filter(m => m.role === "assistant").length;
-  const nextQuestion = allQuestions[askedCount] || null;
+  // Count how many questions have been answered
+  // Each user message after Aria asks a question = one answer
+  // Aria messages: [greeting, q1, q2, q3...] — greeting is index 0, questions start at index 1
+  // User messages: [answer1, answer2, answer3...]
+  const userAnswers = session.messages.filter(m => m.role === "user").length;
+  const nextQuestion = allQuestions[userAnswers] || null;
+
+  console.log(`📋 Questions: ${allQuestions.length} total, ${userAnswers} answered, next: "${nextQuestion}"`);
 
   const systemPrompt = `You are Aria, a phone receptionist for ${config.businessName}.
 
-CONVERSATION SO FAR: ${session.messages.length} messages exchanged.
-
 ${nextQuestion
-  ? `YOUR ONLY JOB RIGHT NOW: Ask this exact question in a warm natural way: "${nextQuestion}"`
-  : `YOUR ONLY JOB RIGHT NOW: You have all the info. Confirm what you collected and say goodbye warmly.`
+  ? `YOUR ONLY JOB: Ask this question warmly in ONE sentence: "${nextQuestion}"`
+  : `YOUR ONLY JOB: Confirm the caller's info and say goodbye warmly in 1-2 sentences.`
 }
 
-FAQs (answer if asked, then get back to collecting info):
+FAQs you can answer if asked (then return to your question):
 ${faqs}
 
 RULES:
-- ONE sentence only
-- Never re-introduce yourself
-- Never say "Thanks for calling" again after the greeting
-- Do not ask any other questions besides the one assigned above`;
+- ONE sentence maximum
+- Do NOT ask any other question
+- Do NOT re-introduce yourself
+- Do NOT say "Thanks for calling" again`;
 
   const response = await anthropic.messages.create({
     model:      "claude-haiku-4-5-20251001",
