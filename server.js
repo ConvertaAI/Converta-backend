@@ -329,16 +329,19 @@ wss.on("connection", (ws) => {
                   try { ws.close(); } catch(e) {}
                 }, 12000);
               } else {
-                // Continue conversation - reconnect stream
+                // Speak reply then reconnect the stream with same callSid
                 await client.calls(callSid).update({
                   twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safeReply}</Say><Connect><Stream url="wss://${SERVER_URL.replace("https://","")}/media-stream"><Parameter name="callSid" value="${callSid}"/></Stream></Connect></Response>`
                 });
+                // Keep isProcessing true for 2s to prevent double-processing on reconnect
+                setTimeout(() => { isProcessing = false; }, 2000);
+                return; // Don't reset isProcessing below
               }
 
             } catch(err) {
               console.error("Processing error:", err.message);
             }
-            isProcessing = false;
+            if (!isProcessing) isProcessing = false;
           }, 1000); // Wait 1000ms of silence before processing
         }
       });
@@ -381,37 +384,27 @@ async function getAriaResponse(session, latestInput) {
     ? config.appointmentQuestions
     : ["What's your name?", "What's the best number to reach you?", "How can we help you today?"];
 
-  const systemPrompt = `You are Aria, a friendly AI phone receptionist for ${config.businessName}. You answer calls and collect caller information.
+  // Figure out which questions still need answers based on conversation
+  const askedCount = session.messages.filter(m => m.role === "assistant").length;
+  const nextQuestion = allQuestions[askedCount] || null;
 
-COLLECT THIS INFO IN ORDER (one question at a time):
-${allQuestions.map((q, i) => `${i+1}. ${q}`).join("\n")}
+  const systemPrompt = `You are Aria, a phone receptionist for ${config.businessName}.
 
-FAQs YOU CAN ANSWER:
+CONVERSATION SO FAR: ${session.messages.length} messages exchanged.
+
+${nextQuestion
+  ? `YOUR ONLY JOB RIGHT NOW: Ask this exact question in a warm natural way: "${nextQuestion}"`
+  : `YOUR ONLY JOB RIGHT NOW: You have all the info. Confirm what you collected and say goodbye warmly.`
+}
+
+FAQs (answer if asked, then get back to collecting info):
 ${faqs}
 
-STRICT RULES:
-- Ask exactly ONE question per response — never combine questions
-- Keep responses to 1 sentence maximum
-- Be warm and conversational
-- If caller asks a FAQ, answer it then continue collecting info
-- Only say goodbye AFTER you have collected ALL info above and confirmed it back to the caller
-- NEVER restart the greeting or re-introduce yourself mid-conversation
-- NEVER say "Thanks for calling [business]" after the first greeting
-
-WHAT YOU STILL NEED TO COLLECT:
-${allQuestions.filter((q, i) => {
-  // Check conversation history to see if this question was already answered
-  const qLower = q.toLowerCase();
-  const answered = session.messages.some((m, idx) => {
-    if (m.role !== "assistant") return false;
-    const mLower = m.content.toLowerCase();
-    // Aria asked this question
-    const asked = allQuestions.some(aq => mLower.includes(aq.toLowerCase().slice(0,15)));
-    // And the next message from user exists
-    return asked && session.messages[idx+1]?.role === "user";
-  });
-  return !answered;
-}).map((q, i) => `- ${q}`).join("\n") || "All info collected — confirm and say goodbye"}`;
+RULES:
+- ONE sentence only
+- Never re-introduce yourself
+- Never say "Thanks for calling" again after the greeting
+- Do not ask any other questions besides the one assigned above`;
 
   const response = await anthropic.messages.create({
     model:      "claude-haiku-4-5-20251001",
