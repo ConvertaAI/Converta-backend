@@ -342,32 +342,39 @@ wss.on("connection", (ws) => {
 async function getAriaReply(session) {
   const { config, messages, turnCount } = session;
   const questions = config.appointmentQuestions || ["What's your name?", "What's your callback number?", "How can we help?"];
-  const faqs = config.faqs?.length ? config.faqs.map(f => `- "${f.q}": ${f.a}`).join("\n") : "None";
+  const faqs = config.faqs?.length ? config.faqs.map(f => `- If asked about "${f.q}", say: ${f.a}`).join("\n") : "None";
 
-  // Determine which question to ask next based on turn count
-  const questionIndex = Math.min(turnCount - 1, questions.length - 1);
-  const nextQuestion = questions[questionIndex];
-  const isLastQuestion = questionIndex >= questions.length - 1;
+  // Strict question index — never skip, never reorder
+  const qIndex = Math.min(turnCount - 1, questions.length - 1);
+  const currentQuestion = questions[qIndex];
+  const isLast = qIndex >= questions.length - 1;
+  const prevMsg = messages.length >= 2 ? messages[messages.length - 2] : null;
+  const callerJustAskedFaq = prevMsg?.role === "user" && config.faqs?.some(f =>
+    prevMsg.content.toLowerCase().includes(f.q.toLowerCase())
+  );
 
-  const system = `You are Aria, a friendly phone receptionist for ${config.businessName}.
+  // If caller asked a FAQ, answer it then ask the current question
+  // Otherwise just ask the current question
+  const system = `You are Aria, a phone receptionist for ${config.businessName}.
 
-Your current task: Ask this question naturally in ONE short sentence: "${nextQuestion}"
-${isLastQuestion ? 'After getting this answer, confirm all their info and let them know the team will be in touch.' : ''}
+${callerJustAskedFaq
+  ? `First answer their question using these FAQs:\n${faqs}\n\nThen immediately ask: "${currentQuestion}"`
+  : `Ask exactly this question in a warm natural way: "${currentQuestion}"`
+}
 
-FAQs you can answer if asked:
-${faqs}
+${isLast ? `This is the last question. After asking it, you will confirm their info and wrap up.` : ""}
 
-Rules:
-- Maximum 1-2 sentences
-- Sound warm and natural
-- If they asked a FAQ, answer it briefly then ask your assigned question
-- Never re-introduce yourself or say "Thanks for calling" again`;
+STRICT RULES:
+- ONE or TWO sentences maximum
+- Do NOT ask any other question besides "${currentQuestion}"
+- Do NOT say "Thanks for calling" or re-introduce yourself
+- Do NOT skip this question or replace it with a different one`;
 
   const response = await anthropic.messages.create({
     model:      "claude-haiku-4-5-20251001",
-    max_tokens: 100,
+    max_tokens: 80,
     system,
-    messages,
+    messages:   messages.slice(-6), // only last 6 messages for speed
   });
   return response.content[0].text.trim();
 }
@@ -402,9 +409,10 @@ function extractLeadData(session, text) {
 }
 
 function hasEnoughInfo(session) {
-  const { leadData, config } = session;
+  const { config } = session;
   const questionsCount = config.appointmentQuestions?.length || 3;
-  return session.turnCount >= questionsCount && leadData.name && (leadData.phone || leadData.reason);
+  // Only close after ALL questions have been asked (one per turn)
+  return session.turnCount >= questionsCount;
 }
 
 function buildClosingMessage(session) {
