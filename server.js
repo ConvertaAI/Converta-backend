@@ -247,6 +247,9 @@ wss.on("connection", (ws) => {
     if (msg.event === "start") {
       callSid = msg.start.customParameters?.callSid || msg.start.callSid;
       console.log(`🎙 Stream started for ${callSid}`);
+      // Reset processing flag on new stream so conversation continues
+      isProcessing = false;
+      finalTranscript = "";
 
       // Connect to Deepgram real-time transcription
       dgConnection = deepgram.listen.live({
@@ -312,16 +315,16 @@ wss.on("connection", (ws) => {
                 await client.calls(callSid).update({
                   twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safeReply}</Say><Pause length="1"/><Hangup/></Response>`
                 });
-                // Stop Deepgram and WebSocket
+                // Stop Deepgram so we don't keep transcribing
                 if (dgConnection) { try { dgConnection.finish(); } catch(e){} }
-                // Force end the call after 6 seconds via REST API as backup
+                // Wait for Aria to finish speaking, then end call
                 setTimeout(async () => {
                   try {
                     await client.calls(callSid).update({ status: "completed" });
                     console.log(`📵 Force ended call ${callSid}`);
                   } catch(e) { /* call may already be ended */ }
                   try { ws.close(); } catch(e) {}
-                }, 6000);
+                }, 12000);
               } else {
                 // Continue conversation - reconnect stream
                 await client.calls(callSid).update({
@@ -351,6 +354,12 @@ wss.on("connection", (ws) => {
       console.log(`🔴 Stream stopped for ${callSid}`);
       clearTimeout(silenceTimer);
       if (dgConnection) dgConnection.finish();
+      // Save lead when stream stops if not already notified
+      const stopSession = CALL_SESSIONS.get(callSid);
+      if (stopSession && stopSession.messages.length > 0 && !stopSession.notified) {
+        stopSession.notified = true;
+        saveLeadAndNotify(stopSession, callSid).catch(e => console.error("Notify error:", e));
+      }
     }
   });
 
