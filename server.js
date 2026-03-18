@@ -177,14 +177,17 @@ app.post("/call-status", async (req, res) => {
   const callSid    = req.body.CallSid;
   const callStatus = req.body.CallStatus;
   console.log(`📵 Call ${callSid} ended: ${callStatus}`);
+  res.sendStatus(200); // respond immediately
 
   const session = CALL_SESSIONS.get(callSid);
   if (session && session.messages.length > 0 && !session.notified) {
     session.notified = true;
+    console.log(`📧 Sending lead email for ${callSid}`);
     await saveLeadAndNotify(session, callSid);
+  } else if (!session) {
+    console.log(`📵 No session found for ${callSid} — call may have been too short`);
   }
   CALL_SESSIONS.delete(callSid);
-  res.sendStatus(200);
 });
 
 // ============================================================
@@ -353,19 +356,13 @@ wss.on("connection", (ws) => {
     if (msg.event === "stop") {
       console.log(`🔴 Stream stopped for ${callSid}`);
       clearTimeout(silenceTimer);
-      if (dgConnection) dgConnection.finish();
-      // Save lead when stream stops if not already notified
-      const stopSession = CALL_SESSIONS.get(callSid);
-      if (stopSession && stopSession.messages.length > 0 && !stopSession.notified) {
-        stopSession.notified = true;
-        saveLeadAndNotify(stopSession, callSid).catch(e => console.error("Notify error:", e));
-      }
+      if (dgConnection) { try { dgConnection.finish(); } catch(e){} }
     }
   });
 
   ws.on("close", () => {
     clearTimeout(silenceTimer);
-    if (dgConnection) dgConnection.finish();
+    if (dgConnection) { try { dgConnection.finish(); } catch(e){} }
     console.log("🔌 WebSocket disconnected");
   });
 });
@@ -401,8 +398,20 @@ STRICT RULES:
 - NEVER restart the greeting or re-introduce yourself mid-conversation
 - NEVER say "Thanks for calling [business]" after the first greeting
 
-PROGRESS SO FAR:
-${allQuestions.map((q, i) => `${i+1}. ${q} → ${i === 0 ? (session.leadData.name || "NOT YET") : i === 1 ? (session.leadData.phone || "NOT YET") : (session.leadData.reason || "NOT YET")}`).join("\n")}`;
+WHAT YOU STILL NEED TO COLLECT:
+${allQuestions.filter((q, i) => {
+  // Check conversation history to see if this question was already answered
+  const qLower = q.toLowerCase();
+  const answered = session.messages.some((m, idx) => {
+    if (m.role !== "assistant") return false;
+    const mLower = m.content.toLowerCase();
+    // Aria asked this question
+    const asked = allQuestions.some(aq => mLower.includes(aq.toLowerCase().slice(0,15)));
+    // And the next message from user exists
+    return asked && session.messages[idx+1]?.role === "user";
+  });
+  return !answered;
+}).map((q, i) => `- ${q}`).join("\n") || "All info collected — confirm and say goodbye"}`;
 
   const response = await anthropic.messages.create({
     model:      "claude-haiku-4-5-20251001",
