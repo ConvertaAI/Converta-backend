@@ -302,9 +302,17 @@ wss.on("connection", (ws) => {
     if (msg.event === "start") {
       const newCallSid = msg.start.customParameters?.callSid || msg.start.callSid;
 
-      // If same call reconnecting (stream restart after Aria speaks) — just reset Deepgram
+      // If same call reconnecting after Aria speaks
       if (newCallSid === callSid) {
-        console.log(`🔄 Stream reconnected for ${callSid} — turn ${CALL_SESSIONS.get(callSid)?.turnCount || 0}`);
+        const existingSession = CALL_SESSIONS.get(callSid);
+        // If call is already closing/closed, hang up immediately
+        if (!existingSession || existingSession.notified) {
+          console.log(`🔴 Stream reconnected after close for ${callSid} — hanging up`);
+          try { await client.calls(callSid).update({ status: "completed" }); } catch(e){}
+          try { ws.close(); } catch(e){}
+          return;
+        }
+        console.log(`🔄 Stream reconnected for ${callSid} — turn ${existingSession.turnCount}`);
         transcript = "";
         if (dgConnection) { try { dgConnection.finish(); } catch(e){} }
       } else {
