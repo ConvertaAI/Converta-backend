@@ -308,13 +308,20 @@ wss.on("connection", (ws) => {
               const safeReply = reply.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
               if (isClosing) {
-                // Say goodbye and hang up
+                // Say goodbye then hang up via REST API after a delay
                 await client.calls(callSid).update({
                   twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safeReply}</Say><Pause length="1"/><Hangup/></Response>`
                 });
-                // Close WebSocket to stop stream reconnecting
+                // Stop Deepgram and WebSocket
                 if (dgConnection) { try { dgConnection.finish(); } catch(e){} }
-                setTimeout(() => { try { ws.close(); } catch(e){} }, 3000);
+                // Force end the call after 6 seconds via REST API as backup
+                setTimeout(async () => {
+                  try {
+                    await client.calls(callSid).update({ status: "completed" });
+                    console.log(`📵 Force ended call ${callSid}`);
+                  } catch(e) { /* call may already be ended */ }
+                  try { ws.close(); } catch(e) {}
+                }, 6000);
               } else {
                 // Continue conversation - reconnect stream
                 await client.calls(callSid).update({
@@ -393,16 +400,31 @@ Already captured: Name=${session.leadData.name||"not yet"} Phone=${session.leadD
 
 function extractLeadData(session, text) {
   const lower = text.toLowerCase();
+  const msgs = session.messages;
+
   if (!session.leadData.name) {
-    // Try formal intro first
-    const m = text.match(/(?:my name is|i'm|i am|it's|this is|name's)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
-    if (m) session.leadData.name = m[1].trim();
+    // Check if previous Aria message asked for name
+    const prevAria = msgs.length >= 2 ? msgs[msgs.length - 2] : null;
+    const ariaAskedName = prevAria && prevAria.role === "assistant" &&
+      /name|call you|who (am i|is this)/i.test(prevAria.content);
+
+    // If Aria just asked for name, treat this response as the name
+    if (ariaAskedName && text.trim().split(" ").length <= 3) {
+      session.leadData.name = text.trim().replace(/[^a-zA-Z\s]/g, "").trim();
+    } else {
+      // Try formal intro
+      const m = text.match(/(?:my name is|i'm|i am|it's|this is|name's)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)/i);
+      if (m) session.leadData.name = m[1].trim();
+    }
   }
+
   if (!session.leadData.reason) {
     const reasons = ["appointment","checkup","cleaning","pain","emergency","question","quote","consultation","inspection","reservation","booking","table","dinner","lunch","party","group"];
     for (const r of reasons) if (lower.includes(r)) { session.leadData.reason = r; break; }
-    // Fallback — use first 60 chars of what they said as reason
-    if (!session.leadData.reason && text.length > 5) session.leadData.reason = text.slice(0, 60);
+    // Only use fallback if it's not the name
+    if (!session.leadData.reason && text.length > 5 && !session.leadData.name?.toLowerCase().includes(text.toLowerCase().trim())) {
+      session.leadData.reason = text.slice(0, 60);
+    }
   }
 }
 
