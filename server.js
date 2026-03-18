@@ -257,7 +257,7 @@ wss.on("connection", (ws) => {
         language:        "en-US",
         smart_format:    true,
         interim_results: true,
-        endpointing:     300,
+        endpointing:     500,
         encoding:        "mulaw",
         sample_rate:     8000,
         channels:        1,
@@ -336,7 +336,7 @@ wss.on("connection", (ws) => {
               console.error("Processing error:", err.message);
             }
             isProcessing = false;
-          }, 600); // Wait 600ms of silence before processing
+          }, 1000); // Wait 1000ms of silence before processing
         }
       });
 
@@ -378,25 +378,31 @@ async function getAriaResponse(session, latestInput) {
   const faqs = config.faqs && config.faqs.length
     ? config.faqs.map(f => `Q: ${f.q} → A: ${f.a}`).join(" | ")
     : "None";
-  const questions = config.appointmentQuestions && config.appointmentQuestions.length
-    ? config.appointmentQuestions.join(", ")
-    : "name, callback number, reason for call";
 
-  const systemPrompt = `You are Aria, a friendly AI phone receptionist for ${config.businessName}.
+  // Build ordered list of what still needs to be collected
+  const allQuestions = config.appointmentQuestions && config.appointmentQuestions.length
+    ? config.appointmentQuestions
+    : ["What's your name?", "What's the best number to reach you?", "How can we help you today?"];
 
-YOUR JOB: Have a natural phone conversation. Collect the caller's info one question at a time.
-INFO TO COLLECT: ${questions}
-FAQs YOU CAN ANSWER: ${faqs}
+  const systemPrompt = `You are Aria, a friendly AI phone receptionist for ${config.businessName}. You answer calls and collect caller information.
 
-RULES:
-- Ask ONE question at a time — never ask multiple things at once
-- Keep each response to 1-2 SHORT sentences max
-- Sound warm and natural, not robotic
-- Answer FAQs directly when asked
-- Once you have collected ALL required info, confirm it back to the caller and let them know the team will be in touch
-- Do NOT wrap up until you have collected all the required info above
+COLLECT THIS INFO IN ORDER (one question at a time):
+${allQuestions.map((q, i) => `${i+1}. ${q}`).join("\n")}
 
-Already captured: Name=${session.leadData.name||"not yet"} Phone=${session.leadData.phone||"not yet"} Reason=${session.leadData.reason||"not yet"}`;
+FAQs YOU CAN ANSWER:
+${faqs}
+
+STRICT RULES:
+- Ask exactly ONE question per response — never combine questions
+- Keep responses to 1 sentence maximum
+- Be warm and conversational
+- If caller asks a FAQ, answer it then continue collecting info
+- Only say goodbye AFTER you have collected ALL info above and confirmed it back to the caller
+- NEVER restart the greeting or re-introduce yourself mid-conversation
+- NEVER say "Thanks for calling [business]" after the first greeting
+
+PROGRESS SO FAR:
+${allQuestions.map((q, i) => `${i+1}. ${q} → ${i === 0 ? (session.leadData.name || "NOT YET") : i === 1 ? (session.leadData.phone || "NOT YET") : (session.leadData.reason || "NOT YET")}`).join("\n")}`;
 
   const response = await anthropic.messages.create({
     model:      "claude-haiku-4-5-20251001",
