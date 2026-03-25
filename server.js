@@ -104,12 +104,12 @@ function createSession(callSid, config, fromNumber) {
   return {
     callSid,
     config,
-    messages: [],       // full conversation history
+    messages: [],
     leadData: { name: null, phone: fromNumber || null, reason: null },
-    turnCount: 0,       // number of caller turns
+    turnCount: 0,
     startTime: Date.now(),
-    closed: false,      // true once we've said goodbye
-    emailSent: false,   // true once email has been sent
+    closed: false,
+    emailSent: false,
   };
 }
 
@@ -151,6 +151,60 @@ app.get("/demo/deactivate", (req, res) => {
 
 app.get("/health", (req, res) => res.json({ status: "ok", stripe: "live", twilio: "live", deepgram: "live" }));
 app.get("/", (req, res) => res.json({ status: "Converta.AI v3 running" }));
+
+
+// ============================================================
+//  MISSED CALL TEXT-BACK
+//  Fires when caller hangs up before Aria answers (no session)
+// ============================================================
+app.post("/missed-call", async (req, res) => {
+  res.sendStatus(200);
+  const callSid    = req.body.CallSid;
+  const fromNumber = req.body.From;
+  const toNumber   = req.body.To;
+  const status     = req.body.CallStatus;
+
+  // Only text back if call was not answered (no-answer or busy)
+  if (!["no-answer", "busy", "failed"].includes(status)) return;
+  if (!fromNumber || fromNumber === "anonymous") return;
+
+  const config = (activeDemoConfig && demoExpiry > Date.now())
+    ? activeDemoConfig
+    : (CLIENT_CONFIGS[toNumber] || getDefaultConfig());
+
+  console.log(`📵 Missed call from ${fromNumber} to ${config.businessName} — sending text-back`);
+
+  try {
+    await client.messages.create({
+      to:   fromNumber,
+      from: toNumber || process.env.TWILIO_PHONE_NUMBER,
+      body: `Hi! You just called ${config.businessName}. Sorry we missed you! Reply to this message or call us back and we'll be happy to help. — ${config.businessName}`,
+    });
+    console.log(`📱 Text-back sent to ${fromNumber}`);
+  } catch(e) {
+    console.error("Text-back error:", e.message);
+  }
+});
+
+
+// ============================================================
+//  PORTAL LOGIN — credentials never exposed in frontend
+// ============================================================
+const PORTAL_USERS = {
+  [process.env.ADMIN_EMAIL || 'admin@converta.ai']: {
+    password: process.env.ADMIN_PASSWORD || 'changeme_now',
+    role: 'admin', name: 'Marcus', biz: 'Converta.AI'
+  },
+};
+
+app.post("/portal-login", (req, res) => {
+  const { email, password } = req.body;
+  const user = PORTAL_USERS[email?.toLowerCase()];
+  if (!user || user.password !== password) {
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
+  res.json({ user: { email, role: user.role, name: user.name, biz: user.biz } });
+});
 
 // ============================================================
 //  INCOMING CALL
@@ -480,6 +534,39 @@ async function sendLeadEmail(session) {
     }
   } catch(e) {
     console.error("📧 Email error:", e.message);
+  }
+
+  // Fire Zapier webhook if configured
+  await sendZapierWebhook(session);
+}
+
+// ============================================================
+//  ZAPIER WEBHOOK
+// ============================================================
+async function sendZapierWebhook(session) {
+  const { config, leadData, messages, startTime } = session;
+  if (!config.zapierWebhook) return;
+
+  const duration = Math.round((Date.now() - startTime) / 1000);
+  const transcript = messages.map(m => `${m.role === "user" ? "Caller" : "Aria"}: ${m.content}`).join("\n");
+
+  try {
+    const res = await fetch(config.zapierWebhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        business:    config.businessName,
+        caller_name: leadData.name || "Unknown",
+        caller_phone: leadData.phone || "Unknown",
+        reason:      leadData.reason || "Unknown",
+        duration_seconds: duration,
+        timestamp:   new Date().toISOString(),
+        transcript,
+      })
+    });
+    console.log(`⚡ Zapier webhook fired for ${config.businessName} — status: ${res.status}`);
+  } catch(e) {
+    console.error("Zapier webhook error:", e.message);
   }
 }
 
