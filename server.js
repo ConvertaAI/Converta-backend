@@ -198,12 +198,26 @@ const PORTAL_USERS = {
 };
 
 app.post("/portal-login", (req, res) => {
+  res.header("Access-Control-Allow-Origin", "*");
   const { email, password } = req.body;
-  const user = PORTAL_USERS[email?.toLowerCase()];
+  console.log(`🔐 Portal login attempt: ${email}`);
+  if (!email || !password) {
+    return res.status(400).json({ error: "Missing email or password" });
+  }
+  const user = PORTAL_USERS[email.toLowerCase().trim()];
   if (!user || user.password !== password) {
+    console.log(`❌ Failed login for: ${email}`);
     return res.status(401).json({ error: "Invalid credentials" });
   }
+  console.log(`✅ Portal login success: ${email} (${user.role})`);
   res.json({ user: { email, role: user.role, name: user.name, biz: user.biz } });
+});
+
+app.options("/portal-login", (req, res) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "POST");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  res.sendStatus(200);
 });
 
 // ============================================================
