@@ -505,7 +505,16 @@ async function sendLeadEmail(session) {
     return;
   }
 
+  // Fire calendar integration before sending email
+  await handleCalendarIntegration(session);
+
   const transcript = messages.map(m => `${m.role === "user" ? "Caller" : "Aria"}: ${m.content}`).join("\n");
+  const calendlySection = session.calendlyUrl
+    ? `<div style="margin-top:16px;padding:14px;background:#e8f5f2;border-radius:6px;border-left:3px solid #00d4aa">
+        <strong>📅 Book a follow-up appointment:</strong><br>
+        <a href="${session.calendlyUrl}" style="color:#00857a">${session.calendlyUrl}</a>
+       </div>`
+    : '';
 
   try {
     const res = await fetch("https://api.resend.com/emails", {
@@ -535,7 +544,7 @@ async function sendLeadEmail(session) {
               <strong>Transcript</strong><br><br>
               <pre style="font-family:Arial;font-size:13px;white-space:pre-wrap;margin:0">${transcript}</pre>
             </div>
-            <p style="font-size:12px;color:#999;margin-top:16px">Powered by Converta.AI</p>
+            ${calendlySection}<p style="font-size:12px;color:#999;margin-top:16px">Powered by Converta.AI</p>
           </div>
         </div>`
       })
@@ -640,3 +649,131 @@ server.listen(PORT, () => {
   console.log(`\n🚀 Converta.AI v3 on port ${PORT}`);
   console.log(`   Stripe: LIVE | Twilio: LIVE | Deepgram: LIVE`);
 });
+
+// ============================================================
+//  CALENDAR INTEGRATIONS
+// ============================================================
+
+async function createGoogleCalendarEvent(session, config) {
+  const { leadData } = session;
+  const cal = config.calendarConfig;
+  if (!cal?.serviceAccountEmail || !cal?.privateKey || !cal?.calendarId) return;
+  try {
+    const crypto = require('crypto');
+    const now = Math.floor(Date.now() / 1000);
+    const header  = Buffer.from(JSON.stringify({ alg:'RS256', typ:'JWT' })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({
+      iss: cal.serviceAccountEmail,
+      scope: 'https://www.googleapis.com/auth/calendar',
+      aud: 'https://oauth2.googleapis.com/token',
+      exp: now + 3600, iat: now,
+    })).toString('base64url');
+    const sign = crypto.createSign('RSA-SHA256');
+    sign.update(`${header}.${payload}`);
+    const sig = sign.sign(cal.privateKey.replace(/\\n/g, '\n'), 'base64url');
+    const jwt = `${header}.${payload}.${sig}`;
+
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`
+    });
+    const { access_token } = await tokenRes.json();
+    if (!access_token) throw new Error('No access token');
+
+    const start = new Date(); start.setDate(start.getDate()+1); start.setHours(9,0,0,0);
+    const end   = new Date(start.getTime() + 30*60000);
+
+    const evtRes = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal.calendarId)}/events`,
+      {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          summary:     `📞 New Lead: ${leadData.name||'Unknown'} — ${config.businessName}`,
+          description: `Caller: ${leadData.name||'Unknown'}\nPhone: ${leadData.phone||'Unknown'}\nReason: ${leadData.reason||'Unknown'}\nCaptured by Aria at ${new Date().toLocaleString()}\n\nView full transcript in your Converta.AI portal.`,
+          start: { dateTime: start.toISOString(), timeZone: 'America/New_York' },
+          end:   { dateTime: end.toISOString(),   timeZone: 'America/New_York' },
+          colorId: '2',
+          reminders: { useDefault: false, overrides: [{ method:'popup', minutes:30 }] },
+        }),
+      }
+    );
+    const evt = await evtRes.json();
+    if (evt.id) console.log(`📅 Google Calendar event created: ${evt.htmlLink}`);
+    else console.error('Google Calendar failed:', JSON.stringify(evt));
+  } catch(e) { console.error('Google Calendar error:', e.message); }
+}
+
+async function createOutlookCalendarEvent(session, config) {
+  const { leadData } = session;
+  const cal = config.calendarConfig;
+  if (!cal?.tenantId || !cal?.clientId || !cal?.clientSecret || !cal?.userEmail) return;
+  try {
+    const tokenRes = await fetch(
+      `https://login.microsoftonline.com/${cal.tenantId}/oauth2/v2.0/token`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials', client_id: cal.clientId,
+          client_secret: cal.clientSecret, scope: 'https://graph.microsoft.com/.default',
+        }).toString(),
+      }
+    );
+    const { access_token } = await tokenRes.json();
+    if (!access_token) throw new Error('No token');
+
+    const start = new Date(); start.setDate(start.getDate()+1); start.setHours(9,0,0,0);
+    const end   = new Date(start.getTime() + 30*60000);
+
+    const evtRes = await fetch(
+      `https://graph.microsoft.com/v1.0/users/${cal.userEmail}/calendar/events`,
+      {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject: `📞 New Lead: ${leadData.name||'Unknown'} — ${config.businessName}`,
+          body: { contentType:'text', content:`Caller: ${leadData.name||'Unknown'}\nPhone: ${leadData.phone||'Unknown'}\nReason: ${leadData.reason||'Unknown'}\nCaptured by Aria at ${new Date().toLocaleString()}` },
+          start: { dateTime: start.toISOString(), timeZone:'Eastern Standard Time' },
+          end:   { dateTime: end.toISOString(),   timeZone:'Eastern Standard Time' },
+          isReminderOn: true, reminderMinutesBeforeStart: 30,
+        }),
+      }
+    );
+    const evt = await evtRes.json();
+    if (evt.id) console.log(`📅 Outlook event created for ${leadData.name||'Unknown'}`);
+    else console.error('Outlook failed:', JSON.stringify(evt));
+  } catch(e) { console.error('Outlook Calendar error:', e.message); }
+}
+
+async function handleCalendlyIntegration(session, config) {
+  const cal = config.calendarConfig;
+  if (!cal?.bookingUrl) return;
+  session.calendlyUrl = cal.bookingUrl;
+  console.log(`📅 Calendly link attached: ${cal.bookingUrl}`);
+  if (cal.webhookUrl) {
+    try {
+      await fetch(cal.webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: session.leadData.name||'Unknown', phone: session.leadData.phone||'Unknown',
+          reason: session.leadData.reason||'Unknown', business: config.businessName,
+          timestamp: new Date().toISOString(), source: 'Converta.AI',
+        }),
+      });
+    } catch(e) { console.error('Calendly webhook error:', e.message); }
+  }
+}
+
+async function handleCalendarIntegration(session) {
+  const config = session.config;
+  if (!config.calendarType || !config.calendarConfig) return;
+  console.log(`📅 Running calendar integration: ${config.calendarType}`);
+  switch(config.calendarType) {
+    case 'google':   await createGoogleCalendarEvent(session, config); break;
+    case 'outlook':  await createOutlookCalendarEvent(session, config); break;
+    case 'calendly': await handleCalendlyIntegration(session, config); break;
+  }
+}
