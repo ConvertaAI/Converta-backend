@@ -374,6 +374,66 @@ setInterval(() => {
   if (cleaned > 0) console.log(`🧹 Cleaned ${cleaned} stale call tracker entries`);
 }, 3600000);
 
+
+// ============================================================
+//  DYNAMIC CLIENT SETTINGS
+//  Overrides CLIENT_CONFIGS when client saves from portal
+//  Keyed by ownerEmail so portal can update by email
+// ============================================================
+const CLIENT_SETTINGS = new Map(); // email -> settings object
+
+// Merge dynamic settings over base config
+function getClientConfig(toNumber, ownerEmail) {
+  const base = CLIENT_CONFIGS[toNumber] || getDefaultConfig();
+  if (!ownerEmail) return base;
+  const dynamic = CLIENT_SETTINGS.get(ownerEmail);
+  if (!dynamic) return base;
+  return {
+    ...base,
+    businessName:         dynamic.businessName         || base.businessName,
+    greeting:             dynamic.greeting              || base.greeting,
+    closing:              dynamic.closing               || base.closing,
+    hours:                dynamic.hours                 || base.hours,
+    urgent:               dynamic.urgent                || base.urgent,
+    never:                dynamic.never                 || base.never,
+    appointmentQuestions: dynamic.questions?.length     ? dynamic.questions : base.appointmentQuestions,
+    faqs:                 dynamic.faqs?.length          ? dynamic.faqs      : base.faqs,
+  };
+}
+
+// Save settings endpoint — called from portal
+app.post("/client-settings", (req, res) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  const { email, password, settings } = req.body;
+  if (!email || !settings) return res.status(400).json({ error: "Missing email or settings" });
+
+  // Verify the user is authenticated (check against PORTAL_USERS)
+  const user = PORTAL_USERS[email?.toLowerCase()?.trim()];
+  if (!user || user.password !== password) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  CLIENT_SETTINGS.set(email.toLowerCase(), settings);
+  console.log(`⚙️ Settings updated for ${email}: ${settings.businessName || "unknown"}`);
+  res.json({ success: true, message: "Settings saved. Aria will use these on the next call." });
+});
+
+app.options("/client-settings", (req, res) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "POST");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  res.sendStatus(200);
+});
+
+// Get current settings — portal reads this on load
+app.get("/client-settings", (req, res) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  const { email } = req.query;
+  if (!email) return res.status(400).json({ error: "Missing email" });
+  const settings = CLIENT_SETTINGS.get(email.toLowerCase());
+  res.json({ settings: settings || null });
+});
+
 // ============================================================
 //  INCOMING CALL
 // ============================================================
@@ -381,9 +441,11 @@ app.post("/incoming-call", async (req, res) => {
   const callSid    = req.body.CallSid;
   const toNumber   = req.body.To || process.env.TWILIO_PHONE_NUMBER;
   const fromNumber = req.body.From || "unknown";
-  const config     = (activeDemoConfig && demoExpiry > Date.now())
+  const baseConfig  = CLIENT_CONFIGS[toNumber];
+  const ownerEmail  = baseConfig?.ownerEmail || null;
+  const config      = (activeDemoConfig && demoExpiry > Date.now())
     ? activeDemoConfig
-    : (CLIENT_CONFIGS[toNumber] || getDefaultConfig());
+    : getClientConfig(toNumber, ownerEmail);
 
   // Check for abuse before processing
   const abuse = checkAbuse(fromNumber, toNumber);
