@@ -224,6 +224,156 @@ app.options("/portal-login", (req, res) => {
   res.sendStatus(200);
 });
 
+
+// ============================================================
+//  ABUSE PROTECTION
+//  Rate limiting, spam detection, call blocking
+// ============================================================
+
+// Track calls per number per business
+const CALL_TRACKER = new Map(); // key: "from:to" -> { count, firstCall, lastCall, blocked }
+const BLOCKED_NUMBERS = new Set(); // permanently blocked numbers
+const HOURLY_LIMIT   = 3;   // max calls from same number per hour per business
+const DAILY_LIMIT    = 8;   // max calls from same number per day per business
+const GLOBAL_HOURLY  = 10;  // max calls from same number across ALL businesses per hour
+
+function getTracker(from, to) {
+  const key = `${from}:${to}`;
+  if (!CALL_TRACKER.has(key)) {
+    CALL_TRACKER.set(key, { count: 0, hourCount: 0, firstCall: Date.now(), lastCall: Date.now(), hourStart: Date.now() });
+  }
+  return CALL_TRACKER.get(key);
+}
+
+function getGlobalTracker(from) {
+  const key = `global:${from}`;
+  if (!CALL_TRACKER.has(key)) {
+    CALL_TRACKER.set(key, { count: 0, hourCount: 0, firstCall: Date.now(), lastCall: Date.now(), hourStart: Date.now() });
+  }
+  return CALL_TRACKER.get(key);
+}
+
+function checkAbuse(from, to) {
+  if (!from || from === 'anonymous' || from === 'unknown') return { allowed: true };
+
+  // Check permanent block list
+  if (BLOCKED_NUMBERS.has(from)) {
+    console.log(`🚫 Blocked number attempted call: ${from}`);
+    return { allowed: false, reason: 'blocked' };
+  }
+
+  const now = Date.now();
+  const tracker = getTracker(from, to);
+  const global  = getGlobalTracker(from);
+
+  // Reset hourly counts if hour has passed
+  if (now - tracker.hourStart > 3600000) {
+    tracker.hourCount = 0;
+    tracker.hourStart = now;
+  }
+  if (now - global.hourStart > 3600000) {
+    global.hourCount = 0;
+    global.hourStart = now;
+  }
+
+  // Reset daily counts if 24 hours have passed
+  if (now - tracker.firstCall > 86400000) {
+    tracker.count    = 0;
+    tracker.firstCall = now;
+  }
+
+  tracker.count++;
+  tracker.hourCount++;
+  tracker.lastCall = now;
+  global.count++;
+  global.hourCount++;
+
+  // Check limits
+  if (global.hourCount > GLOBAL_HOURLY) {
+    console.log(`🚫 Global rate limit hit for ${from}: ${global.hourCount} calls/hr across all businesses`);
+    if (global.hourCount > GLOBAL_HOURLY * 3) {
+      BLOCKED_NUMBERS.add(from);
+      console.log(`🚫 Auto-blocked ${from} for excessive abuse`);
+    }
+    return { allowed: false, reason: 'global_rate_limit' };
+  }
+
+  if (tracker.hourCount > HOURLY_LIMIT) {
+    console.log(`⚠️ Hourly rate limit hit for ${from} → ${to}: ${tracker.hourCount} calls/hr`);
+    return { allowed: false, reason: 'hourly_rate_limit' };
+  }
+
+  if (tracker.count > DAILY_LIMIT) {
+    console.log(`⚠️ Daily limit hit for ${from} → ${to}: ${tracker.count} calls today`);
+    return { allowed: false, reason: 'daily_limit' };
+  }
+
+  return { allowed: true };
+}
+
+function abuseResponse(res, reason) {
+  const twiml = new VoiceResponse();
+  if (reason === 'blocked') {
+    twiml.reject();
+  } else {
+    twiml.say(
+      { voice: "Polly.Joanna-Neural", language: "en-US" },
+      "We are unable to process your call at this time. Please try again later."
+    );
+    twiml.hangup();
+  }
+  res.set("Content-Type", "text/xml");
+  res.send(twiml.toString());
+}
+
+// Admin endpoint to view and manage abuse
+app.get("/admin/abuse", (req, res) => {
+  const key = req.query.key;
+  if (key !== process.env.ADMIN_PASSWORD) return res.status(401).json({ error: "Unauthorized" });
+
+  const trackers = [];
+  CALL_TRACKER.forEach((v, k) => {
+    if (!k.startsWith('global:')) {
+      trackers.push({ key: k, ...v });
+    }
+  });
+  trackers.sort((a, b) => b.count - a.count);
+
+  res.json({
+    blocked_numbers: [...BLOCKED_NUMBERS],
+    top_callers: trackers.slice(0, 20),
+    total_tracked: trackers.length,
+  });
+});
+
+app.post("/admin/block", (req, res) => {
+  const key = req.query.key;
+  if (key !== process.env.ADMIN_PASSWORD) return res.status(401).json({ error: "Unauthorized" });
+  const { number, action } = req.body;
+  if (!number) return res.status(400).json({ error: "number required" });
+  if (action === 'unblock') {
+    BLOCKED_NUMBERS.delete(number);
+    console.log(`✅ Unblocked: ${number}`);
+  } else {
+    BLOCKED_NUMBERS.add(number);
+    console.log(`🚫 Manually blocked: ${number}`);
+  }
+  res.json({ success: true, blocked: [...BLOCKED_NUMBERS] });
+});
+
+// Clean up old tracker entries every hour to prevent memory leak
+setInterval(() => {
+  const now = Date.now();
+  let cleaned = 0;
+  CALL_TRACKER.forEach((v, k) => {
+    if (now - v.lastCall > 86400000) {
+      CALL_TRACKER.delete(k);
+      cleaned++;
+    }
+  });
+  if (cleaned > 0) console.log(`🧹 Cleaned ${cleaned} stale call tracker entries`);
+}, 3600000);
+
 // ============================================================
 //  INCOMING CALL
 // ============================================================
@@ -234,6 +384,13 @@ app.post("/incoming-call", async (req, res) => {
   const config     = (activeDemoConfig && demoExpiry > Date.now())
     ? activeDemoConfig
     : (CLIENT_CONFIGS[toNumber] || getDefaultConfig());
+
+  // Check for abuse before processing
+  const abuse = checkAbuse(fromNumber, toNumber);
+  if (!abuse.allowed) {
+    console.log(`🚫 Call rejected from ${fromNumber} — reason: ${abuse.reason}`);
+    return abuseResponse(res, abuse.reason);
+  }
 
   console.log(`📞 Call ${callSid} → ${config.businessName} from ${fromNumber}`);
 
