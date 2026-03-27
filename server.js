@@ -864,6 +864,59 @@ async function handleStripeWebhook(req, res) {
   } catch(e) { res.status(400).send(`Webhook Error: ${e.message}`); }
 }
 
+
+// ============================================================
+//  FALLBACK — fires if primary webhook fails
+// ============================================================
+app.post("/fallback", (req, res) => {
+  const callSid    = req.body.CallSid;
+  const fromNumber = req.body.From;
+  const toNumber   = req.body.To;
+  console.log(`⚠️ Fallback triggered for ${callSid} from ${fromNumber}`);
+
+  if (fromNumber && fromNumber !== 'anonymous') {
+    const config = CLIENT_CONFIGS[toNumber] || getDefaultConfig();
+    client.messages.create({
+      to: fromNumber, from: toNumber || process.env.TWILIO_PHONE_NUMBER,
+      body: `Hi! You just called ${config.businessName}. We missed your call but will call you back shortly. Sorry for the inconvenience!`,
+    }).catch(e => console.error("Fallback text error:", e.message));
+  }
+
+  const twiml = new VoiceResponse();
+  twiml.say({ voice:"Polly.Joanna-Neural", language:"en-US" },
+    "Thank you for calling. We are experiencing a brief technical issue. Please leave your name and number after the tone and we will call you back as soon as possible."
+  );
+  twiml.record({ maxLength:120, transcribe:false, playBeep:true, recordingStatusCallback:`${SERVER_URL}/recording-status` });
+  twiml.say({ voice:"Polly.Joanna-Neural" }, "Thank you. We will be in touch shortly.");
+  res.set("Content-Type", "text/xml");
+  res.send(twiml.toString());
+});
+
+app.post("/recording-status", async (req, res) => {
+  res.sendStatus(200);
+  const recordingUrl = req.body.RecordingUrl;
+  const from         = req.body.From || "Unknown";
+  const to           = req.body.To;
+  if (!recordingUrl) return;
+
+  const config     = CLIENT_CONFIGS[to] || getDefaultConfig();
+  const ownerEmail = config.ownerEmail || process.env.NOTIFY_EMAIL;
+  if (!ownerEmail || !process.env.RESEND_API_KEY) return;
+
+  try {
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Authorization":`Bearer ${process.env.RESEND_API_KEY}`, "Content-Type":"application/json" },
+      body: JSON.stringify({
+        from: "Converta.AI <onboarding@resend.dev>", to: ownerEmail,
+        subject: `⚠️ Missed call voicemail — ${from}`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:600px"><div style="background:#f0c040;padding:16px 20px;border-radius:6px 6px 0 0"><h2 style="color:#020408;margin:0">⚠️ Fallback Voicemail</h2></div><div style="background:#fff;padding:20px;border:1px solid #e0e0e0;border-radius:0 0 6px 6px"><p>A caller was routed to the fallback system.</p><table style="width:100%"><tr><td style="color:#666;padding:6px 0;width:120px">From</td><td><strong>${from}</strong></td></tr><tr><td style="color:#666;padding:6px 0">Business</td><td><strong>${config.businessName}</strong></td></tr><tr><td style="color:#666;padding:6px 0">Voicemail</td><td><a href="${recordingUrl}">Listen here</a></td></tr><tr><td style="color:#666;padding:6px 0">Time</td><td>${new Date().toLocaleString()}</td></tr></table></div></div>`
+      })
+    });
+    console.log(`📧 Fallback voicemail email sent for ${from}`);
+  } catch(e) { console.error("Fallback email error:", e.message); }
+});
+
 // ============================================================
 //  START
 // ============================================================
