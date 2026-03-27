@@ -407,9 +407,24 @@ app.post("/client-settings", (req, res) => {
   const { email, password, settings } = req.body;
   if (!email || !settings) return res.status(400).json({ error: "Missing email or settings" });
 
-  // Verify the user is authenticated (check against PORTAL_USERS)
+  // Verify using SHA-256 hash — matches portal's hash-based auth
+  const crypto = require('crypto');
+  const inputHash = crypto.createHash('sha256').update(password || '').digest('hex');
+
+  // Check against PORTAL_USERS (plaintext password comparison)
   const user = PORTAL_USERS[email?.toLowerCase()?.trim()];
-  if (!user || user.password !== password) {
+  const plainMatch = user && user.password === password;
+
+  // Also check known client hashes
+  const CLIENT_HASHES = {
+    'admin@converta.ai':       process.env.ADMIN_HASH || '',
+    'democlient@converta.ai':  'fa413cfe46c3fbb4d9bfb3241e3ab639fc162de381d1d6edebc511e5790dce45',
+  };
+  const hashMatch = CLIENT_HASHES[email?.toLowerCase()]
+    && CLIENT_HASHES[email.toLowerCase()] === inputHash;
+
+  if (!plainMatch && !hashMatch) {
+    console.log(`❌ Settings auth failed for ${email}`);
     return res.status(401).json({ error: "Unauthorized" });
   }
 
