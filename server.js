@@ -44,6 +44,10 @@ const DEMO_CONFIGS = {
       { q: "emergency", a: "Yes we see dental emergencies same day. I'll flag this as urgent for our team." },
     ],
     appointmentQuestions: ["What's your name?", "What's the best number to reach you?", "Are you a new or existing patient?", "What's the reason for your visit?"],
+    calendarType: "calendly",
+    calendarConfig: {
+      bookingUrl: "https://calendly.com/convertaai",
+    },
   },
   medspa: {
     businessName: "Luxe Med Spa",
