@@ -38,6 +38,7 @@ const DEMO_CONFIGS = {
   dental: {
     businessName: "Bright Smile Dental",
     greeting: "Thanks for calling Bright Smile Dental, this is Aria! How can I help you today?",
+    ownerEmail: "democlient@converta.ai",
     faqs: [
       { q: "insurance", a: "We accept Delta Dental, Cigna, Aetna, BlueCross, and most major PPO plans." },
       { q: "hours", a: "We're open Monday through Friday 8am to 5pm, and Saturdays 9am to 1pm." },
@@ -458,9 +459,33 @@ app.post("/incoming-call", async (req, res) => {
   const fromNumber = req.body.From || "unknown";
   const baseConfig  = CLIENT_CONFIGS[toNumber];
   const ownerEmail  = baseConfig?.ownerEmail || null;
-  const config      = (activeDemoConfig && demoExpiry > Date.now())
+
+  // Start with demo or base config
+  let config = (activeDemoConfig && demoExpiry > Date.now())
     ? activeDemoConfig
     : getClientConfig(toNumber, ownerEmail);
+
+  // Apply dynamic settings on top of demo config if client has saved from portal
+  if (activeDemoConfig && demoExpiry > Date.now()) {
+    const demoEmail = activeDemoConfig.ownerEmail || null;
+    if (demoEmail) {
+      const dynamic = CLIENT_SETTINGS.get(demoEmail);
+      if (dynamic) {
+        config = {
+          ...activeDemoConfig,
+          businessName:         dynamic.businessName         || activeDemoConfig.businessName,
+          greeting:             dynamic.greeting              || activeDemoConfig.greeting,
+          closing:              dynamic.closing               || activeDemoConfig.closing,
+          hours:                dynamic.hours                 || activeDemoConfig.hours,
+          urgent:               dynamic.urgent                || activeDemoConfig.urgent,
+          never:                dynamic.never                 || activeDemoConfig.never,
+          appointmentQuestions: dynamic.questions?.length     ? dynamic.questions : activeDemoConfig.appointmentQuestions,
+          faqs:                 dynamic.faqs?.length          ? dynamic.faqs      : activeDemoConfig.faqs,
+        };
+        console.log(`⚙️ Demo config overridden with portal settings for ${demoEmail}`);
+      }
+    }
+  }
 
   // Check for abuse before processing
   const abuse = checkAbuse(fromNumber, toNumber);
