@@ -361,13 +361,17 @@ tr:hover td{background:var(--teal-dim)}
               time:       new Date(c.created_at).toLocaleString(),
               status:     c.status || 'captured',
               transcript: (c.transcript || []).map(function(m) {
-                return { r: m.role === 'user' ? 'caller' : 'aria', t: m.content };
+                return {
+                  r: (m.role === 'user' || m.r === 'caller') ? 'caller' : 'aria',
+                  t: m.content || m.t || ''
+                };
               }),
             };
           });
+          // Force re-render of current page with real data
           var p = activePage;
           activePage = null;
-          showPage(p);
+          if (p) showPage(p);
         }
         if (d.settings) {
           localStorage.setItem('aria_settings_' + email, JSON.stringify({
