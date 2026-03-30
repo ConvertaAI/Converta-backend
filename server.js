@@ -680,9 +680,17 @@ async function getAriaReply(session) {
   const currentQuestion = questions[qIndex];
   const isLast = qIndex >= questions.length - 1;
   const prevMsg = messages.length >= 2 ? messages[messages.length - 2] : null;
-  const callerJustAskedFaq = prevMsg?.role === "user" && config.faqs?.some(f =>
-    prevMsg.content.toLowerCase().includes(f.q.toLowerCase())
-  );
+  // Match FAQs more flexibly — check if any word from the FAQ question
+  // appears in what the caller said, or if the FAQ keyword matches
+  const callerJustAskedFaq = prevMsg?.role === "user" && config.faqs?.some(f => {
+    const callerLower = prevMsg.content.toLowerCase();
+    const faqLower = f.q.toLowerCase();
+    // Direct include check
+    if (callerLower.includes(faqLower)) return true;
+    // Keyword check — any significant word from FAQ question found in caller message
+    const keywords = faqLower.split(/\s+/).filter(w => w.length > 3);
+    return keywords.some(k => callerLower.includes(k));
+  });
 
   // ── LIVE BOOKING: check if caller mentioned a date/time ──
   const lastCallerMsg = messages[messages.length - 1]?.content || "";
@@ -723,7 +731,7 @@ async function getAriaReply(session) {
   const system = `You are Aria, a phone receptionist for ${config.businessName}.
 
 ${callerJustAskedFaq
-  ? `First answer their question using these FAQs:\n${faqs}\n\nThen immediately ask: "${currentQuestion}"`
+  ? `The caller asked something related to your FAQs. Answer it naturally using this information:\n${faqs}\n\nAfter answering, ask: "${currentQuestion}"`
   : `Ask exactly this question in a warm natural way: "${currentQuestion}"`
 }
 
@@ -795,7 +803,10 @@ function escapeXml(str) {
 async function sendLeadEmail(session) {
   const { config, leadData, messages, startTime } = session;
   const duration = Math.round((Date.now() - startTime) / 1000);
-  const to = config.ownerEmail || process.env.NOTIFY_EMAIL;
+  // Until Resend domain is verified, always send to NOTIFY_EMAIL (your Gmail)
+  // Once you verify converta.ai domain at resend.com, change this to:
+  // const to = config.ownerEmail || process.env.NOTIFY_EMAIL;
+  const to = process.env.NOTIFY_EMAIL;
 
   if (!to || !process.env.RESEND_API_KEY) {
     console.log("📧 Email skipped — no NOTIFY_EMAIL or RESEND_API_KEY");
@@ -905,19 +916,32 @@ app.post("/create-checkout-session", async (req, res) => {
     const p = PLANS[plan];
     if (!p) return res.status(400).json({ error: "Invalid plan" });
     const recurring = billing === "annual" ? p.annualPrice : p.monthlyPrice;
-    const items = [];
-    if (p.setupPrice)  items.push({ price: p.setupPrice,  quantity: 1 });
-    if (recurring)     items.push({ price: recurring,     quantity: 1 });
+    if (!recurring) return res.status(400).json({ error: "Invalid billing period" });
+
+    console.log(`💳 Checkout: ${plan} ${billing} — recurring: ${recurring} setup: ${p.setupPrice}`);
+
+    // Build line items — recurring price always included
+    // Setup fee (one-time) added first — Stripe supports mixing in subscription mode
+    const lineItems = [];
+    if (p.setupPrice) lineItems.push({ price: p.setupPrice, quantity: 1 });
+    lineItems.push({ price: recurring, quantity: 1 });
+
     const sess = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-      line_items: items,
+      line_items: lineItems,
       mode: "subscription",
       success_url: `${process.env.FRONTEND_URL || "https://converta-site.vercel.app"}/?success=true&plan=${plan}`,
       cancel_url:  `${process.env.FRONTEND_URL || "https://converta-site.vercel.app"}/?canceled=true`,
       metadata: { plan, billing },
+      subscription_data: { metadata: { plan, billing } },
     });
+
+    console.log(`💳 Checkout session created: ${sess.id}`);
     res.json({ url: sess.url });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) {
+    console.error("Checkout error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post("/create-customer-portal-session", async (req, res) => {
