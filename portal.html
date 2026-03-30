@@ -342,9 +342,48 @@ tr:hover td{background:var(--teal-dim)}
   }
 
   var activePage = null;
-
   var REAL_CALLS = [];
   var REAL_SETTINGS = null;
+
+  function loadRealData() {
+    var email = currentUser.email;
+    fetch('https://web-production-46fe1e.up.railway.app/portal-data?email=' + encodeURIComponent(email))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.calls && d.calls.length) {
+          REAL_CALLS = d.calls.map(function(c) {
+            return {
+              id:         c.call_sid,
+              caller:     c.caller_name  || 'Unknown',
+              phone:      c.caller_phone || 'Unknown',
+              reason:     c.reason       || 'Unknown',
+              duration:   c.duration_seconds ? Math.floor(c.duration_seconds/60) + 'm ' + (c.duration_seconds%60) + 's' : '0m 0s',
+              time:       new Date(c.created_at).toLocaleString(),
+              status:     c.status || 'captured',
+              transcript: (c.transcript || []).map(function(m) {
+                return { r: m.role === 'user' ? 'caller' : 'aria', t: m.content };
+              }),
+            };
+          });
+          var p = activePage;
+          activePage = null;
+          showPage(p);
+        }
+        if (d.settings) {
+          localStorage.setItem('aria_settings_' + email, JSON.stringify({
+            businessName: d.settings.businessName || '',
+            greeting:     d.settings.greeting     || '',
+            closing:      d.settings.closing      || '',
+            hours:        d.settings.hours        || '',
+            urgent:       d.settings.urgent       || '',
+            never:        d.settings.never        || '',
+            questions:    d.settings.questions    || [],
+            faqs:         d.settings.faqs         || [],
+          }));
+        }
+      })
+      .catch(function(e) { console.log('Could not load real data:', e.message); });
+  }
 
   function initApp() {
     document.getElementById('user-avatar').textContent = currentUser.name.charAt(0).toUpperCase();
