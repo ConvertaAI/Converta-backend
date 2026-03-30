@@ -22,6 +22,15 @@ const deepgram  = createClient(process.env.DEEPGRAM_API_KEY);
 const VoiceResponse = twilio.twiml.VoiceResponse;
 const SERVER_URL = process.env.SERVER_URL || "https://web-production-46fe1e.up.railway.app";
 
+// ── Supabase ──
+const { createClient: createSupabaseClient } = require("@supabase/supabase-js");
+const supabase = createSupabaseClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY,
+  { auth: { persistSession: false } }
+);
+console.log("🗄️ Supabase connected:", process.env.SUPABASE_URL);
+
 app.post("/webhook", express.raw({ type: "application/json" }), handleStripeWebhook);
 app.use(cors({ origin: "*" }));
 app.use(express.json());
@@ -202,20 +211,41 @@ const PORTAL_USERS = {
   },
 };
 
-app.post("/portal-login", (req, res) => {
+app.post("/portal-login", async (req, res) => {
   res.header("Access-Control-Allow-Origin", "*");
   const { email, password } = req.body;
   console.log(`🔐 Portal login attempt: ${email}`);
-  if (!email || !password) {
-    return res.status(400).json({ error: "Missing email or password" });
+  if (!email || !password) return res.status(400).json({ error: "Missing email or password" });
+
+  const crypto = require("crypto");
+  const hash = crypto.createHash("sha256").update(password).digest("hex");
+
+  // Check Supabase first
+  try {
+    const { data, error } = await supabase
+      .from("portal_users")
+      .select("*")
+      .eq("email", email.toLowerCase().trim())
+      .eq("password_hash", hash)
+      .single();
+
+    if (data && !error) {
+      console.log(`✅ Supabase login success: ${email} (${data.role})`);
+      return res.json({ user: { email, role: data.role, name: data.name, biz: data.biz } });
+    }
+  } catch(e) {
+    console.log("Supabase login error, falling back:", e.message);
   }
+
+  // Fallback to PORTAL_USERS in memory
   const user = PORTAL_USERS[email.toLowerCase().trim()];
-  if (!user || user.password !== password) {
-    console.log(`❌ Failed login for: ${email}`);
-    return res.status(401).json({ error: "Invalid credentials" });
+  if (user && user.password === password) {
+    console.log(`✅ Fallback login success: ${email}`);
+    return res.json({ user: { email, role: user.role, name: user.name, biz: user.biz } });
   }
-  console.log(`✅ Portal login success: ${email} (${user.role})`);
-  res.json({ user: { email, role: user.role, name: user.name, biz: user.biz } });
+
+  console.log(`❌ Failed login for: ${email}`);
+  res.status(401).json({ error: "Invalid credentials" });
 });
 
 app.options("/portal-login", (req, res) => {
@@ -402,35 +432,52 @@ function getClientConfig(toNumber, ownerEmail) {
   };
 }
 
-// Save settings endpoint — called from portal
-app.post("/client-settings", (req, res) => {
+// Save settings — writes to Supabase AND memory cache
+app.post("/client-settings", async (req, res) => {
   res.header("Access-Control-Allow-Origin", "*");
   const { email, password, settings } = req.body;
   if (!email || !settings) return res.status(400).json({ error: "Missing email or settings" });
 
-  // Verify using SHA-256 hash — matches portal's hash-based auth
-  const crypto = require('crypto');
-  const inputHash = crypto.createHash('sha256').update(password || '').digest('hex');
+  const crypto = require("crypto");
+  const inputHash = crypto.createHash("sha256").update(password || "").digest("hex");
 
-  // Check against PORTAL_USERS (plaintext password comparison)
-  const user = PORTAL_USERS[email?.toLowerCase()?.trim()];
-  const plainMatch = user && user.password === password;
+  // Authenticate via Supabase
+  let authorized = false;
+  try {
+    const { data } = await supabase.from("portal_users").select("email").eq("email", email.toLowerCase().trim()).eq("password_hash", inputHash).single();
+    if (data) authorized = true;
+  } catch(e) { console.log("Settings auth error:", e.message); }
 
-  // Also check known client hashes
-  const CLIENT_HASHES = {
-    'admin@converta.ai':       process.env.ADMIN_HASH || '',
-    'democlient@converta.ai':  'fa413cfe46c3fbb4d9bfb3241e3ab639fc162de381d1d6edebc511e5790dce45',
-  };
-  const hashMatch = CLIENT_HASHES[email?.toLowerCase()]
-    && CLIENT_HASHES[email.toLowerCase()] === inputHash;
-
-  if (!plainMatch && !hashMatch) {
-    console.log(`❌ Settings auth failed for ${email}`);
-    return res.status(401).json({ error: "Unauthorized" });
+  // Fallback hash check
+  if (!authorized) {
+    const KNOWN = {
+      "admin@converta.ai": "b084d079609b7ad1b948c6968858e98677ad93a389b600b394a9100b5376b85f",
+      "democlient@converta.ai": "fa413cfe46c3fbb4d9bfb3241e3ab639fc162de381d1d6edebc511e5790dce45",
+    };
+    if (KNOWN[email.toLowerCase()] === inputHash) authorized = true;
   }
 
-  CLIENT_SETTINGS.set(email.toLowerCase(), settings);
-  console.log(`⚙️ Settings updated for ${email}: ${settings.businessName || "unknown"}`);
+  if (!authorized) return res.status(401).json({ error: "Unauthorized" });
+
+  const emailKey = email.toLowerCase().trim();
+  CLIENT_SETTINGS.set(emailKey, settings);
+
+  try {
+    await supabase.from("client_settings").upsert({
+      email: emailKey,
+      business_name: settings.businessName || null,
+      greeting:      settings.greeting     || null,
+      closing:       settings.closing      || null,
+      hours:         settings.hours        || null,
+      urgent:        settings.urgent       || null,
+      never:         settings.never        || null,
+      questions:     settings.questions    || [],
+      faqs:          settings.faqs         || [],
+      updated_at:    new Date().toISOString(),
+    }, { onConflict: "email" });
+    console.log(`⚙️ Settings saved to Supabase for ${emailKey}`);
+  } catch(e) { console.error("Supabase settings save error:", e.message); }
+
   res.json({ success: true, message: "Settings saved. Aria will use these on the next call." });
 });
 
@@ -441,436 +488,22 @@ app.options("/client-settings", (req, res) => {
   res.sendStatus(200);
 });
 
-// Get current settings — portal reads this on load
-app.get("/client-settings", (req, res) => {
+app.get("/client-settings", async (req, res) => {
   res.header("Access-Control-Allow-Origin", "*");
   const { email } = req.query;
   if (!email) return res.status(400).json({ error: "Missing email" });
-  const settings = CLIENT_SETTINGS.get(email.toLowerCase());
-  res.json({ settings: settings || null });
-});
-
-// ============================================================
-//  INCOMING CALL
-// ============================================================
-app.post("/incoming-call", async (req, res) => {
-  const callSid    = req.body.CallSid;
-  const toNumber   = req.body.To || process.env.TWILIO_PHONE_NUMBER;
-  const fromNumber = req.body.From || "unknown";
-  const baseConfig  = CLIENT_CONFIGS[toNumber];
-  const ownerEmail  = baseConfig?.ownerEmail || null;
-
-  // Start with demo or base config
-  let config = (activeDemoConfig && demoExpiry > Date.now())
-    ? activeDemoConfig
-    : getClientConfig(toNumber, ownerEmail);
-
-  // Apply dynamic settings on top of demo config if client has saved from portal
-  if (activeDemoConfig && demoExpiry > Date.now()) {
-    const demoEmail = activeDemoConfig.ownerEmail || null;
-    if (demoEmail) {
-      const dynamic = CLIENT_SETTINGS.get(demoEmail);
-      if (dynamic) {
-        config = {
-          ...activeDemoConfig,
-          businessName:         dynamic.businessName         || activeDemoConfig.businessName,
-          greeting:             dynamic.greeting              || activeDemoConfig.greeting,
-          closing:              dynamic.closing               || activeDemoConfig.closing,
-          hours:                dynamic.hours                 || activeDemoConfig.hours,
-          urgent:               dynamic.urgent                || activeDemoConfig.urgent,
-          never:                dynamic.never                 || activeDemoConfig.never,
-          appointmentQuestions: dynamic.questions?.length     ? dynamic.questions : activeDemoConfig.appointmentQuestions,
-          faqs:                 dynamic.faqs?.length          ? dynamic.faqs      : activeDemoConfig.faqs,
-        };
-        console.log(`⚙️ Demo config overridden with portal settings for ${demoEmail}`);
-      }
-    }
-  }
-
-  // Check for abuse before processing
-  const abuse = checkAbuse(fromNumber, toNumber);
-  if (!abuse.allowed) {
-    console.log(`🚫 Call rejected from ${fromNumber} — reason: ${abuse.reason}`);
-    return abuseResponse(res, abuse.reason);
-  }
-
-  console.log(`📞 Call ${callSid} → ${config.businessName} from ${fromNumber}`);
-
-  // Create session
-  SESSIONS.set(callSid, createSession(callSid, config, fromNumber));
-
-  // Register status callback
-  try {
-    await client.calls(callSid).update({
-      statusCallback: `${SERVER_URL}/call-status`,
-      statusCallbackMethod: "POST",
-      statusCallbackEvent: ["completed"],
-    });
-  } catch(e) { console.log("Status callback warn:", e.message); }
-
-  const twiml = new VoiceResponse();
-  twiml.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, config.greeting);
-  const connect = twiml.connect();
-  const stream = connect.stream({ url: `wss://${SERVER_URL.replace("https://", "")}/media-stream` });
-  stream.parameter({ name: "callSid", value: callSid });
-
-  res.set("Content-Type", "text/xml");
-  res.send(twiml.toString());
-});
-
-// ============================================================
-//  CALL STATUS — email fires here
-// ============================================================
-app.post("/call-status", async (req, res) => {
-  const callSid = req.body.CallSid;
-  const status  = req.body.CallStatus;
-  console.log(`📵 Call ${callSid} → ${status}`);
-  res.sendStatus(200);
-
-  const session = SESSIONS.get(callSid);
-  if (session && !session.emailSent && session.messages.length > 0) {
-    session.emailSent = true;
-    await sendLeadEmail(session);
-  }
-  SESSIONS.delete(callSid);
-});
-
-// ============================================================
-//  WEBSOCKET — Media Stream
-// ============================================================
-wss.on("connection", (ws) => {
-  let callSid    = null;
-  let dg         = null;
-  let transcript = "";
-  let timer      = null;
-  let busy       = false;
-
-  function startDeepgram() {
-    if (dg) { try { dg.finish(); } catch(e){} }
-    dg = deepgram.listen.live({
-      model:           "nova-2-phonecall",
-      language:        "en-US",
-      smart_format:    true,
-      interim_results: false,
-      endpointing:     500,
-      encoding:        "mulaw",
-      sample_rate:     8000,
-      channels:        1,
-    });
-    dg.on(LiveTranscriptionEvents.Open, () => console.log(`🟢 Deepgram ready (${callSid})`));
-    dg.on(LiveTranscriptionEvents.Transcript, (data) => {
-      const text = data.channel?.alternatives?.[0]?.transcript?.trim();
-      if (!text || !data.is_final) return;
-      transcript += (transcript ? " " : "") + text;
-      console.log(`📝 "${text}"`);
-      clearTimeout(timer);
-      timer = setTimeout(() => handleTranscript(), 800);
-    });
-    dg.on(LiveTranscriptionEvents.Error, (e) => console.error("DG error:", e?.message));
-  }
-
-  async function handleTranscript() {
-    const text = transcript.trim();
-    transcript = "";
-    if (!text || busy) return;
-
-    const session = SESSIONS.get(callSid);
-    if (!session || session.closed) return;
-
-    busy = true;
-    try {
-      session.messages.push({ role: "user", content: text });
-      session.turnCount++;
-      extractLeadData(session, text);
-      console.log(`👤 Turn ${session.turnCount}: "${text}"`);
-
-      // Check if we should close
-      const shouldClose = session.turnCount >= 10 || hasEnoughInfo(session);
-
-      let reply;
-      if (shouldClose) {
-        reply = buildClosingMessage(session);
-        session.messages.push({ role: "assistant", content: reply });
-        session.closed = true;
-      } else {
-        reply = await getAriaReply(session);
-        session.messages.push({ role: "assistant", content: reply });
-      }
-
-      console.log(`🤖 Aria: "${reply}"`);
-      const safe = escapeXml(reply);
-
-      if (session.closed) {
-        // Say goodbye and hang up
-        await client.calls(callSid).update({
-          twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safe}</Say><Pause length="1"/><Hangup/></Response>`
-        });
-        if (dg) { try { dg.finish(); } catch(e){} }
-        // Backup force-end after 15s
-        setTimeout(async () => {
-          try { await client.calls(callSid).update({ status: "completed" }); } catch(e){}
-        }, 15000);
-      } else {
-        // Continue conversation
-        await client.calls(callSid).update({
-          twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safe}</Say><Connect><Stream url="wss://${SERVER_URL.replace("https://","")}/media-stream"><Parameter name="callSid" value="${callSid}"/></Stream></Connect></Response>`
-        });
-        // Restart Deepgram for next turn — delay to let Aria finish speaking
-        setTimeout(() => {
-          busy = false;
-          startDeepgram();
-        }, 1500);
-        return;
-      }
-    } catch(err) {
-      console.error("Handle error:", err.message);
-    }
-    busy = false;
-  }
-
-  ws.on("message", (raw) => {
-    let msg;
-    try { msg = JSON.parse(raw); } catch(e) { return; }
-
-    if (msg.event === "start") {
-      const sid = msg.start.customParameters?.callSid || msg.start.callSid;
-      // If this is a reconnect after Aria spoke, check if call is closed
-      if (sid === callSid) {
-        const session = SESSIONS.get(sid);
-        if (!session || session.closed) {
-          console.log(`🔴 Reconnect on closed call ${sid} — hanging up`);
-          try { client.calls(sid).update({ status: "completed" }); } catch(e){}
-          return;
-        }
-        console.log(`🔄 Stream reconnect for ${sid}`);
-        return; // Deepgram already restarted via setTimeout above
-      }
-      callSid = sid;
-      console.log(`🎙 Stream started for ${callSid}`);
-      startDeepgram();
-    }
-
-    if (msg.event === "media" && dg) {
-      try { dg.send(Buffer.from(msg.media.payload, "base64")); } catch(e){}
-    }
-
-    if (msg.event === "stop") {
-      clearTimeout(timer);
-      if (dg) { try { dg.finish(); } catch(e){} }
-      console.log(`🔴 Stream stopped for ${callSid}`);
-    }
-  });
-
-  ws.on("close", () => {
-    clearTimeout(timer);
-    if (dg) { try { dg.finish(); } catch(e){} }
-  });
-});
-
-// ============================================================
-//  AI RESPONSE
-// ============================================================
-async function getAriaReply(session) {
-  const { config, messages, turnCount } = session;
-  const questions = config.appointmentQuestions || ["What's your name?", "What's your callback number?", "How can we help?"];
-  const faqs = config.faqs?.length ? config.faqs.map(f => `- If asked about "${f.q}", say: ${f.a}`).join("\n") : "None";
-
-  // Strict question index — never skip, never reorder
-  const qIndex = Math.min(turnCount - 1, questions.length - 1);
-  const currentQuestion = questions[qIndex];
-  const isLast = qIndex >= questions.length - 1;
-  const prevMsg = messages.length >= 2 ? messages[messages.length - 2] : null;
-  // Match FAQs more flexibly — check if any word from the FAQ question
-  // appears in what the caller said, or if the FAQ keyword matches
-  const callerJustAskedFaq = prevMsg?.role === "user" && config.faqs?.some(f => {
-    const callerLower = prevMsg.content.toLowerCase();
-    const faqLower = f.q.toLowerCase();
-    // Direct include check
-    if (callerLower.includes(faqLower)) return true;
-    // Keyword check — any significant word from FAQ question found in caller message
-    const keywords = faqLower.split(/\s+/).filter(w => w.length > 3);
-    return keywords.some(k => callerLower.includes(k));
-  });
-
-  // ── LIVE BOOKING: check if caller mentioned a date/time ──
-  const lastCallerMsg = messages[messages.length - 1]?.content || "";
-  if (config.liveBooking && config.calendarConfig?.serviceAccountEmail) {
-    const bookingResult = await handleBookingRequest(session, lastCallerMsg);
-    if (bookingResult) {
-      if (bookingResult.startsWith("confirmed:")) {
-        const timeStr = bookingResult.replace("confirmed:", "");
-        session.closed = true;
-        session.notified = true;
-        return `Perfect! I've gone ahead and booked your appointment for ${timeStr}. You'll receive a confirmation shortly. Is there anything else you need before I let you go?`;
-      }
-      if (bookingResult.startsWith("suggest:")) {
-        const [, timeStr, isoStr] = bookingResult.split(":");
-        session.pendingSuggestedTime = isoStr;
-        return `That time is already taken — but I have availability on ${timeStr}. Does that work for you?`;
-      }
-      if (bookingResult === "unavailable") {
-        return `I'm having trouble finding an open slot right now. Let me take your info and someone from our team will call you back to get you scheduled.`;
-      }
-    }
-
-    // If caller confirmed a suggested time
-    if (session.pendingSuggestedTime && /yes|sure|that works|perfect|sounds good/i.test(lastCallerMsg)) {
-      const suggestedTime = new Date(session.pendingSuggestedTime);
-      const booked = await bookGoogleAppointment(session, suggestedTime);
-      if (booked) {
-        const timeStr = suggestedTime.toLocaleString('en-US', {weekday:'long',month:'long',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true});
-        session.closed = true;
-        session.notified = true;
-        delete session.pendingSuggestedTime;
-        return `Great! You are all set for ${timeStr}. We will see you then!`;
-      }
-    }
-  }
-
-  // Standard question flow
-  const system = `You are Aria, a phone receptionist for ${config.businessName}.
-
-${callerJustAskedFaq
-  ? `The caller asked something related to your FAQs. Answer it naturally using this information:\n${faqs}\n\nAfter answering, ask: "${currentQuestion}"`
-  : `Ask exactly this question in a warm natural way: "${currentQuestion}"`
-}
-
-${isLast ? `This is the last question. After asking it, you will confirm their info and wrap up.` : ""}
-
-STRICT RULES:
-- ONE or TWO sentences maximum
-- Do NOT ask any other question besides "${currentQuestion}"
-- Do NOT say "Thanks for calling" or re-introduce yourself
-- Do NOT skip this question or replace it with a different one`;
-
-  const response = await anthropic.messages.create({
-    model:      "claude-haiku-4-5-20251001",
-    max_tokens: 80,
-    system,
-    messages:   messages.slice(-6),
-  });
-  return response.content[0].text.trim();
-}
-
-function extractLeadData(session, text) {
-  const msgs = session.messages;
-  const prevAria = msgs.length >= 2 ? msgs[msgs.length - 2] : null;
-
-  // Name: if Aria asked for name and caller gave a short response
-  if (!session.leadData.name && prevAria?.role === "assistant") {
-    const askedName = /name|call you|who (am i|is this)/i.test(prevAria.content);
-    if (askedName && text.split(" ").length <= 4) {
-      session.leadData.name = text.replace(/[^a-zA-Z\s]/g, "").trim();
-    }
-  }
-
-  // Phone: extract digits
-  if (!session.leadData.phone || session.leadData.phone === "unknown") {
-    const digits = text.replace(/\D/g, "");
-    if (digits.length >= 10) session.leadData.phone = digits;
-  }
-
-  // Reason: keywords or previous Aria question context
-  if (!session.leadData.reason && prevAria?.role === "assistant") {
-    const askedReason = /help|reason|visit|interested|matter|calling/i.test(prevAria.content);
-    if (askedReason && text.length > 3) session.leadData.reason = text.slice(0, 80);
-  }
-  if (!session.leadData.reason) {
-    const keywords = ["appointment","reservation","booking","consultation","question","emergency","pain","repair","injury","dinner","lunch","table"];
-    for (const k of keywords) if (text.toLowerCase().includes(k)) { session.leadData.reason = k; break; }
-  }
-}
-
-function hasEnoughInfo(session) {
-  const { config } = session;
-  const questionsCount = config.appointmentQuestions?.length || 3;
-  // Add 1 buffer turn for the caller's initial message before questions start
-  return session.turnCount >= questionsCount + 1;
-}
-
-function buildClosingMessage(session) {
-  const name = session.leadData.name ? ` ${session.leadData.name.split(" ")[0]}` : "";
-  return `Perfect${name}! I've got everything I need. Someone from our team will be in touch with you shortly. Have a great day!`;
-}
-
-function escapeXml(str) {
-  return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;");
-}
-
-// ============================================================
-//  EMAIL via Resend
-// ============================================================
-async function sendLeadEmail(session) {
-  const { config, leadData, messages, startTime } = session;
-  const duration = Math.round((Date.now() - startTime) / 1000);
-  // Until Resend domain is verified, always send to NOTIFY_EMAIL (your Gmail)
-  // Once you verify converta.ai domain at resend.com, change this to:
-  // const to = config.ownerEmail || process.env.NOTIFY_EMAIL;
-  const to = process.env.NOTIFY_EMAIL;
-
-  if (!to || !process.env.RESEND_API_KEY) {
-    console.log("📧 Email skipped — no NOTIFY_EMAIL or RESEND_API_KEY");
-    return;
-  }
-
-  // Fire calendar integration before sending email
-  await handleCalendarIntegration(session);
-
-  const transcript = messages.map(m => `${m.role === "user" ? "Caller" : "Aria"}: ${m.content}`).join("\n");
-  const calendlySection = session.calendlyUrl
-    ? `<div style="margin-top:16px;padding:14px;background:#e8f5f2;border-radius:6px;border-left:3px solid #00d4aa">
-        <strong>📅 Book a follow-up appointment:</strong><br>
-        <a href="${session.calendlyUrl}" style="color:#00857a">${session.calendlyUrl}</a>
-       </div>`
-    : '';
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.RESEND_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        from: "Converta.AI <onboarding@resend.dev>",
-        to,
-        subject: `📞 New Lead: ${leadData.name || "Unknown"} — ${config.businessName}`,
-        html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
-          <div style="background:#00d4aa;padding:16px 20px;border-radius:6px 6px 0 0">
-            <h2 style="color:#020408;margin:0">📞 New Lead from Aria</h2>
-          </div>
-          <div style="background:#fff;padding:20px;border:1px solid #e0e0e0;border-radius:0 0 6px 6px">
-            <table style="width:100%;border-collapse:collapse">
-              <tr><td style="padding:8px 0;color:#666;width:160px">Business</td><td style="font-weight:bold">${config.businessName}</td></tr>
-              <tr><td style="padding:8px 0;color:#666">Name</td><td style="font-weight:bold">${leadData.name || "Not captured"}</td></tr>
-              <tr><td style="padding:8px 0;color:#666">Phone</td><td style="font-weight:bold"><a href="tel:${leadData.phone}">${leadData.phone || "Unknown"}</a></td></tr>
-              <tr><td style="padding:8px 0;color:#666">Reason</td><td style="font-weight:bold">${leadData.reason || "Not captured"}</td></tr>
-              <tr><td style="padding:8px 0;color:#666">Duration</td><td>${duration}s</td></tr>
-              <tr><td style="padding:8px 0;color:#666">Time</td><td>${new Date().toLocaleString()}</td></tr>
-            </table>
-            <div style="margin-top:20px;padding:16px;background:#f5f5f5;border-radius:6px">
-              <strong>Transcript</strong><br><br>
-              <pre style="font-family:Arial;font-size:13px;white-space:pre-wrap;margin:0">${transcript}</pre>
-            </div>
-            ${calendlySection}<p style="font-size:12px;color:#999;margin-top:16px">Powered by Converta.AI</p>
-          </div>
-        </div>`
-      })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      console.log(`📧 Email sent to ${to} — id: ${data.id}`);
-    } else {
-      console.error("📧 Email failed:", JSON.stringify(data));
+    const { data } = await supabase.from("client_settings").select("*").eq("email", email.toLowerCase().trim()).single();
+    if (data) {
+      const settings = { businessName:data.business_name, greeting:data.greeting, closing:data.closing, hours:data.hours, urgent:data.urgent, never:data.never, questions:data.questions||[], faqs:data.faqs||[] };
+      CLIENT_SETTINGS.set(email.toLowerCase().trim(), settings);
+      return res.json({ settings });
     }
-  } catch(e) {
-    console.error("📧 Email error:", e.message);
-  }
+  } catch(e) { console.error("Get settings error:", e.message); }
 
-  // Fire Zapier webhook if configured
-  await sendZapierWebhook(session);
-}
-
+  res.json({ settings: CLIENT_SETTINGS.get(email.toLowerCase().trim()) || null });
+});
 // ============================================================
 //  ZAPIER WEBHOOK
 // ============================================================
@@ -966,6 +599,158 @@ async function handleStripeWebhook(req, res) {
 // ============================================================
 //  FALLBACK — fires if primary webhook fails
 // ============================================================
+
+
+// ============================================================
+//  PORTAL DATA — returns real call logs + settings for portal
+// ============================================================
+app.get("/portal-data", async (req, res) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  const { email } = req.query;
+  if (!email) return res.status(400).json({ error: "Missing email" });
+
+  const result = { calls: [], settings: null };
+
+  try {
+    // Get call logs for this user's business
+    const { data: calls } = await supabase
+      .from("call_logs")
+      .select("*")
+      .eq("owner_email", email.toLowerCase().trim())
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (calls) result.calls = calls;
+
+    // Get settings
+    const { data: settings } = await supabase
+      .from("client_settings")
+      .select("*")
+      .eq("email", email.toLowerCase().trim())
+      .single();
+
+    if (settings) {
+      result.settings = {
+        businessName: settings.business_name,
+        greeting:     settings.greeting,
+        closing:      settings.closing,
+        hours:        settings.hours,
+        urgent:       settings.urgent,
+        never:        settings.never,
+        questions:    settings.questions || [],
+        faqs:         settings.faqs     || [],
+      };
+    }
+  } catch(e) {
+    console.error("Portal data error:", e.message);
+  }
+
+  res.json(result);
+});
+
+// ============================================================
+//  CALL STATUS — fires when call ends
+// ============================================================
+app.post("/call-status", async (req, res) => {
+  const callSid = req.body.CallSid;
+  const status  = req.body.CallStatus;
+  console.log(`📵 Call ${callSid} → ${status}`);
+  res.sendStatus(200);
+
+  const session = SESSIONS.get(callSid);
+  if (session && !session.emailSent && session.messages.length > 0) {
+    session.emailSent = true;
+    await sendLeadEmail(session);
+  }
+  SESSIONS.delete(callSid);
+});
+
+// ============================================================
+//  LEAD EMAIL + SUPABASE CALL LOG
+// ============================================================
+async function sendLeadEmail(session) {
+  const { config, leadData, messages, startTime, callSid } = session;
+  const duration = Math.round((Date.now() - startTime) / 1000);
+
+  // Always send to your Gmail until domain is verified
+  const to = process.env.NOTIFY_EMAIL;
+
+  if (!to || !process.env.RESEND_API_KEY) {
+    console.log("📧 Email skipped — no NOTIFY_EMAIL or RESEND_API_KEY");
+  }
+
+  // Save call log to Supabase
+  const ownerEmail = config.ownerEmail || process.env.NOTIFY_EMAIL;
+  try {
+    await supabase.from("call_logs").upsert({
+      call_sid:         callSid,
+      owner_email:      ownerEmail,
+      business_name:    config.businessName,
+      caller_name:      leadData.name     || null,
+      caller_phone:     leadData.phone    || null,
+      reason:           leadData.reason   || null,
+      duration_seconds: duration,
+      transcript:       messages,
+      status:           leadData.name ? "captured" : "missed",
+      created_at:       new Date().toISOString(),
+    }, { onConflict: "call_sid" });
+    console.log(`🗄️ Call log saved to Supabase for ${callSid}`);
+  } catch(e) {
+    console.error("Supabase call log error:", e.message);
+  }
+
+  if (!to) return;
+
+  const transcript = messages.map(m => `${m.role === "user" ? "Caller" : "Aria"}: ${m.content}`).join("\n");
+  const calendlySection = session.calendlyUrl
+    ? `<div style="margin-top:16px;padding:14px;background:#e8f5f2;border-radius:6px;border-left:3px solid #00d4aa"><strong>📅 Book a follow-up:</strong><br><a href="${session.calendlyUrl}" style="color:#00857a">${session.calendlyUrl}</a></div>`
+    : "";
+
+  try {
+    const res2 = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.RESEND_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from: "Converta.AI <onboarding@resend.dev>",
+        to,
+        subject: `📞 New Lead: ${leadData.name || "Unknown"} — ${config.businessName}`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+          <div style="background:#00d4aa;padding:16px 20px;border-radius:6px 6px 0 0">
+            <h2 style="color:#020408;margin:0">📞 New Lead from Aria</h2>
+          </div>
+          <div style="background:#fff;padding:20px;border:1px solid #e0e0e0;border-radius:0 0 6px 6px">
+            <table style="width:100%;border-collapse:collapse">
+              <tr><td style="padding:8px 0;color:#666;width:160px">Business</td><td style="font-weight:bold">${config.businessName}</td></tr>
+              <tr><td style="padding:8px 0;color:#666">Name</td><td style="font-weight:bold">${leadData.name || "Not captured"}</td></tr>
+              <tr><td style="padding:8px 0;color:#666">Phone</td><td style="font-weight:bold"><a href="tel:${leadData.phone}">${leadData.phone || "Unknown"}</a></td></tr>
+              <tr><td style="padding:8px 0;color:#666">Reason</td><td style="font-weight:bold">${leadData.reason || "Not captured"}</td></tr>
+              <tr><td style="padding:8px 0;color:#666">Duration</td><td>${duration}s</td></tr>
+              <tr><td style="padding:8px 0;color:#666">Time</td><td>${new Date().toLocaleString()}</td></tr>
+            </table>
+            <div style="margin-top:20px;padding:16px;background:#f5f5f5;border-radius:6px">
+              <strong>Transcript</strong><br><br>
+              <pre style="font-family:Arial;font-size:13px;white-space:pre-wrap;margin:0">${transcript}</pre>
+            </div>
+            ${calendlySection}
+            <p style="font-size:12px;color:#999;margin-top:16px">Powered by Converta.AI</p>
+          </div>
+        </div>`
+      })
+    });
+    const data2 = await res2.json();
+    if (res2.ok) console.log(`📧 Email sent to ${to} — id: ${data2.id}`);
+    else console.error("📧 Email failed:", JSON.stringify(data2));
+  } catch(e) {
+    console.error("📧 Email error:", e.message);
+  }
+
+  // Fire Zapier webhook if configured
+  await sendZapierWebhook(session);
+}
+
 app.post("/fallback", (req, res) => {
   const callSid    = req.body.CallSid;
   const fromNumber = req.body.From;
@@ -1255,9 +1040,31 @@ async function handleBookingRequest(session, callerText) {
 //  START
 // ============================================================
 const PORT = process.env.PORT || 4000;
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`\n🚀 Converta.AI v3 on port ${PORT}`);
   console.log(`   Stripe: LIVE | Twilio: LIVE | Deepgram: LIVE`);
+
+  // Load all client settings from Supabase into memory on startup
+  try {
+    const { data, error } = await supabase.from("client_settings").select("*");
+    if (data && !error) {
+      data.forEach(row => {
+        CLIENT_SETTINGS.set(row.email, {
+          businessName: row.business_name,
+          greeting:     row.greeting,
+          closing:      row.closing,
+          hours:        row.hours,
+          urgent:       row.urgent,
+          never:        row.never,
+          questions:    row.questions || [],
+          faqs:         row.faqs     || [],
+        });
+      });
+      console.log(`🗄️ Loaded ${data.length} client settings from Supabase`);
+    }
+  } catch(e) {
+    console.error("Supabase startup load error:", e.message);
+  }
 });
 
 // ============================================================

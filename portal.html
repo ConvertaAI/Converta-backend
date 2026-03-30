@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Converta.AI — Portal</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+:root{--teal:#00ffe5;--teal-dim:rgba(0,255,229,.08);--teal-mid:rgba(0,255,229,.18);--bg:#020408;--bg2:#060d10;--bg3:#0a1418;--border:rgba(0,255,229,.12);--border-bright:rgba(0,255,229,.3);--text:#e8f5f2;--text-dim:#6b9e94;--text-muted:rgba(232,245,242,.4);--gold:#f0c040;--red:#ff4060;--green:#00e5a0;--card:rgba(0,255,229,.04)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+@keyframes grid-drift{0%{background-position:0px 0px}50%{background-position:27px 27px}100%{background-position:54px 54px}}
+@keyframes orb-move{0%{transform:translate(0%,0%) scale(1);opacity:.06}25%{transform:translate(30%,-20%) scale(1.2);opacity:.1}50%{transform:translate(60%,10%) scale(.9);opacity:.07}75%{transform:translate(20%,40%) scale(1.1);opacity:.09}100%{transform:translate(0%,0%) scale(1);opacity:.06}}
+@keyframes orb-move2{0%{transform:translate(0%,0%) scale(1);opacity:.05}33%{transform:translate(-40%,30%) scale(1.3);opacity:.09}66%{transform:translate(20%,-40%) scale(.8);opacity:.06}100%{transform:translate(0%,0%) scale(1);opacity:.05}}
+body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,255,229,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,229,.04) 1px,transparent 1px);background-size:54px 54px;pointer-events:none;z-index:0;animation:grid-drift 3s linear infinite}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse 600px 400px at 20% 50%,rgba(0,255,229,.06) 0%,transparent 70%);animation:orb-move 8s ease-in-out infinite}
+.bg-orb2{position:fixed;inset:0;pointer-events:none;z-index:0;background:radial-gradient(ellipse 500px 350px at 80% 30%,rgba(0,200,180,.05) 0%,transparent 70%);animation:orb-move2 11s ease-in-out infinite}
+
+@property --angle{syntax:'<angle>';initial-value:0deg;inherits:false}
+@keyframes spin{to{--angle:360deg}}
+@keyframes pulse-glow{0%,100%{box-shadow:0 0 30px rgba(0,255,229,.08),0 0 60px rgba(0,255,229,.04)}50%{box-shadow:0 0 50px rgba(0,255,229,.18),0 0 100px rgba(0,255,229,.08)}}
+
+#login-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:100;background:var(--bg)}
+.login-card{width:420px;border-radius:16px;background:var(--bg2);padding:48px 40px;position:relative;animation:pulse-glow 3s ease-in-out infinite;background-clip:padding-box}
+.login-card::before{content:'';position:absolute;inset:-2px;border-radius:18px;z-index:-1;background:conic-gradient(from var(--angle),transparent 20%,#00ffe5 40%,#00fff0 50%,#00ffe5 60%,transparent 80%);animation:spin 4s linear infinite}
+.login-card::after{content:'';position:absolute;inset:0;border-radius:16px;background:var(--bg2);z-index:-1}
+.login-logo{font-family:'Orbitron',monospace;font-size:22px;font-weight:900;color:var(--teal);letter-spacing:2px;margin-bottom:4px}
+.login-logo span{color:rgba(232,245,242,.3)}
+.login-sub{font-size:13px;color:var(--text-dim);margin-bottom:32px}
+.login-label{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px;display:block}
+.login-input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px 14px;color:var(--text);font-size:14px;font-family:'DM Sans',sans-serif;outline:none;transition:border-color .2s;margin-bottom:16px}
+.login-input:focus{border-color:var(--teal)}
+.login-btn{width:100%;background:var(--teal);color:var(--bg);font-family:'Orbitron',monospace;font-size:13px;font-weight:700;letter-spacing:2px;padding:14px;border:none;border-radius:8px;cursor:pointer;margin-top:8px;transition:opacity .2s}
+.login-btn:hover{opacity:.9}
+.login-btn:disabled{opacity:.5;cursor:not-allowed}
+.login-error{font-size:12px;color:var(--red);margin-top:10px;display:none;padding:8px 12px;background:rgba(255,64,96,.08);border-radius:6px;border:1px solid rgba(255,64,96,.2)}
+.login-footer{margin-top:20px;font-size:12px;color:var(--text-dim);text-align:center}
+.login-footer a{color:var(--teal);text-decoration:none;cursor:pointer}
+
+#app{display:none;min-height:100vh;position:relative;z-index:1}
+.sidebar{position:fixed;left:0;top:0;bottom:0;width:240px;background:var(--bg2);border-right:1px solid var(--border);z-index:50;display:flex;flex-direction:column}
+.sidebar-logo{padding:24px 20px 20px;border-bottom:1px solid var(--border)}
+.sidebar-logo .logo-text{font-family:'Orbitron',monospace;font-size:16px;font-weight:900;color:var(--teal);letter-spacing:2px}
+.sidebar-logo .logo-text span{color:rgba(232,245,242,.3)}
+.role-badge{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-top:4px}
+.sidebar-nav{flex:1;padding:16px 0;overflow-y:auto}
+.nav-section{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--text-muted);padding:12px 20px 6px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 20px;cursor:pointer;color:var(--text-dim);font-size:13px;font-weight:500;transition:all .15s;border-left:2px solid transparent}
+.nav-item:hover{color:var(--text);background:var(--teal-dim)}
+.nav-item.active{color:var(--teal);background:var(--teal-dim);border-left-color:var(--teal)}
+.nav-icon{width:16px;height:16px;flex-shrink:0;opacity:.7}
+.nav-item.active .nav-icon{opacity:1}
+.sidebar-footer{padding:16px 20px;border-top:1px solid var(--border)}
+.user-avatar{width:32px;height:32px;border-radius:50%;background:var(--teal-dim);border:1px solid var(--border-bright);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--teal);flex-shrink:0}
+.user-info{display:flex;align-items:center;gap:10px}
+.user-name{font-size:13px;font-weight:500}
+.user-role{font-size:11px;color:var(--text-dim)}
+.logout-btn{margin-top:10px;width:100%;padding:8px;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--text-dim);font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .2s}
+.logout-btn:hover{border-color:var(--red);color:var(--red)}
+
+.main{margin-left:240px;min-height:100vh;padding:32px}
+.page{display:none}
+.page.active{display:block}
+.page-title{font-family:'Orbitron',monospace;font-size:20px;font-weight:700;color:var(--teal);letter-spacing:1px}
+.page-sub{font-size:13px;color:var(--text-dim);margin-top:4px;margin-bottom:28px}
+
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:18px;position:relative;overflow:hidden}
+.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--teal),transparent);opacity:.4}
+.stat-val{font-family:'Orbitron',monospace;font-size:28px;font-weight:700;color:var(--teal)}
+.stat-label{font-size:12px;color:var(--text-dim);margin-top:6px}
+.stat-change{font-size:11px;margin-top:4px;color:var(--green)}
+
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px}
+.card-title{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);margin-bottom:16px}
+
+.table-wrap{overflow-x:auto;border-radius:10px;border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:var(--bg2);padding:12px 16px;text-align:left;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);font-weight:500;border-bottom:1px solid var(--border)}
+td{padding:12px 16px;border-bottom:1px solid rgba(0,255,229,.05);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--teal-dim)}
+.badge{display:inline-block;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:600}
+.badge-green{background:rgba(0,229,160,.1);color:var(--green);border:1px solid rgba(0,229,160,.2)}
+.badge-teal{background:var(--teal-dim);color:var(--teal);border:1px solid var(--border)}
+.badge-red{background:rgba(255,64,96,.1);color:var(--red);border:1px solid rgba(255,64,96,.2)}
+.badge-gold{background:rgba(240,192,64,.1);color:var(--gold);border:1px solid rgba(240,192,64,.2)}
+
+.transcript-modal{position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:200;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .2s}
+.transcript-modal.open{opacity:1;pointer-events:all}
+.transcript-box{background:var(--bg2);border:1px solid var(--border-bright);border-radius:16px;width:560px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden}
+.transcript-header{padding:20px 24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.transcript-title{font-family:'Orbitron',monospace;font-size:14px;color:var(--teal)}
+.transcript-close{background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:20px}
+.transcript-body{padding:20px 24px;overflow-y:auto;flex:1}
+.msg{margin-bottom:14px}
+.msg-role{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px}
+.msg-role.caller{color:var(--text-dim)}
+.msg-role.aria{color:var(--teal)}
+.msg-text{font-size:13px;line-height:1.6;background:var(--bg3);padding:10px 14px;border-radius:8px}
+.aria-msg .msg-text{border-left:2px solid var(--teal)}
+
+.form-group{margin-bottom:20px}
+.form-label{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px;display:block}
+.form-input,.form-textarea{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:11px 14px;color:var(--text);font-size:14px;font-family:'DM Sans',sans-serif;outline:none;transition:border-color .2s}
+.form-input:focus,.form-textarea:focus{border-color:var(--teal)}
+.form-textarea{resize:vertical;min-height:100px;line-height:1.6}
+.faq-item{display:flex;gap:10px;margin-bottom:10px;align-items:flex-start}
+.faq-inner{flex:1}
+.faq-inner input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:9px 12px;color:var(--text);font-size:13px;font-family:'DM Sans',sans-serif;outline:none;margin-bottom:6px}
+.faq-remove{background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:20px;padding:4px;transition:color .15s}
+.faq-remove:hover{color:var(--red)}
+.add-faq-btn{background:var(--teal-dim);border:1px solid var(--border);color:var(--teal);padding:8px 16px;border-radius:6px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;margin-top:8px}
+.save-btn{background:var(--teal);color:var(--bg);font-family:'Orbitron',monospace;font-size:12px;font-weight:700;letter-spacing:1.5px;padding:12px 28px;border:none;border-radius:8px;cursor:pointer}
+.save-success{font-size:12px;color:var(--green);margin-left:12px;display:none}
+
+.client-row-header,.client-row{display:grid;grid-template-columns:1fr 120px 140px 80px;gap:16px;align-items:center;padding:12px 16px}
+.client-row{border-bottom:1px solid rgba(0,255,229,.05);cursor:pointer;transition:background .15s}
+.client-row:hover{background:var(--teal-dim)}
+.client-row:last-child{border-bottom:none}
+.client-row-header{background:var(--bg2);border-bottom:1px solid var(--border)}
+.col-label{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-dim)}
+.client-name{font-weight:500;font-size:14px}
+.client-industry{font-size:12px;color:var(--text-dim);margin-top:2px}
+
+.plan-display{background:var(--bg2);border:1px solid var(--border-bright);border-radius:12px;padding:24px;margin-bottom:20px;position:relative;overflow:hidden}
+.plan-display::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--teal),transparent)}
+.plan-name-big{font-family:'Orbitron',monospace;font-size:24px;font-weight:700;color:var(--teal)}
+.plan-price-big{font-size:36px;font-weight:300;margin:8px 0}
+.plan-price-big span{font-size:16px;color:var(--text-dim)}
+.plan-features-list{margin-top:16px;display:grid;gap:8px}
+.plan-feature{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-dim)}
+.plan-feature::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--teal);flex-shrink:0}
+
+.search-bar{display:flex;gap:12px;margin-bottom:20px}
+.search-input{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;font-family:'DM Sans',sans-serif;outline:none}
+.search-input:focus{border-color:var(--teal)}
+</style>
+</head>
+<body>
+
+<div class="bg-orb2"></div>
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">CONVERTA<span>.AI</span></div>
+    <div class="login-sub">Sign in to Aria's Reception Portal</div>
+    <label class="login-label">Email</label>
+    <input class="login-input" type="email" id="login-email" placeholder="you@example.com"/>
+    <label class="login-label">Password</label>
+    <input class="login-input" type="password" id="login-pass" placeholder="••••••••"/>
+    <div class="login-error" id="login-error">Invalid email or password. Please try again.</div>
+    <button class="login-btn" id="login-btn" type="button">SIGN IN →</button>
+    <div class="login-footer"><a href="/" style="color:var(--text-dim);text-decoration:none;display:block;margin-bottom:8px;transition:color .2s" onmouseover="this.style.color='var(--teal)'" onmouseout="this.style.color='var(--text-dim)'">← Back to home</a>Need access? <a id="support-email-link">support.converta&#64;gmail.com</a></div>
+  </div>
+</div>
+
+<div id="app">
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <a href="/" style="text-decoration:none"><div class="logo-text">CONVERTA<span>.AI</span></div></a>
+      <div class="role-badge" id="role-badge">Portal</div>
+    </div>
+    <nav class="sidebar-nav" id="sidebar-nav"></nav>
+    <div class="sidebar-footer">
+      <div class="user-info">
+        <div class="user-avatar" id="user-avatar">?</div>
+        <div>
+          <div class="user-name" id="user-name-el">—</div>
+          <div class="user-role" id="user-biz-el">—</div>
+        </div>
+      </div>
+      <button class="logout-btn" id="logout-btn">Sign out</button>
+      <a href="/" style="display:block;margin-top:8px;text-align:center;font-size:12px;color:var(--text-dim);text-decoration:none;transition:color .2s" onmouseover="this.style.color='var(--teal)'" onmouseout="this.style.color='var(--text-dim)'">← Back to home</a>
+    </div>
+  </div>
+  <div class="main" id="main-content"></div>
+</div>
+
+<div class="transcript-modal" id="transcript-modal">
+  <div class="transcript-box">
+    <div class="transcript-header">
+      <div class="transcript-title" id="modal-title">Call Transcript</div>
+      <button class="transcript-close" id="modal-close">✕</button>
+    </div>
+    <div class="transcript-body" id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+(function() {
+
+  // ── Support email (split to avoid scrapers) ──
+  var emailEl = document.getElementById('support-email-link');
+  if (emailEl) {
+    var addr = 'support.converta' + '@' + 'gmail.com';
+    emailEl.textContent = addr;
+    emailEl.style.color = 'var(--teal)';
+    emailEl.style.textDecoration = 'none';
+    emailEl.style.cursor = 'pointer';
+    emailEl.onclick = function() { window.location.href = 'mailto:' + addr; };
+  }
+
+  // ── Auth ──
+  var currentUser = null;
+  var USERS = [
+    { email: 'admin@converta.ai',      hash: 'b084d079609b7ad1b948c6968858e98677ad93a389b600b394a9100b5376b85f', role: 'admin',  name: 'Marcus',       biz: 'Converta.AI' },
+    { email: 'democlient@converta.ai', hash: 'fa413cfe46c3fbb4d9bfb3241e3ab639fc162de381d1d6edebc511e5790dce45', role: 'client', name: 'Dr. Marcus B.', biz: 'Bright Smile Dental' },
+  ];
+
+  function hashPass(str) {
+    return window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)).then(function(buf) {
+      return Array.from(new Uint8Array(buf)).map(function(b) { return b.toString(16).padStart(2,'0'); }).join('');
+    });
+  }
+
+  function showError(msg) {
+    var el = document.getElementById('login-error');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+
+  function hideError() {
+    document.getElementById('login-error').style.display = 'none';
+  }
+
+  function setBtn(text, disabled) {
+    var btn = document.getElementById('login-btn');
+    btn.textContent = text;
+    btn.disabled = !!disabled;
+  }
+
+  function doLogin() {
+    var email = document.getElementById('login-email').value.trim().toLowerCase();
+    var pass  = document.getElementById('login-pass').value;
+    hideError();
+
+    if (!email || !pass) {
+      showError('Please enter your email and password.');
+      return;
+    }
+
+    setBtn('SIGNING IN...', true);
+
+    hashPass(pass).then(function(hash) {
+      var match = null;
+      for (var i = 0; i < USERS.length; i++) {
+        if (USERS[i].email === email && USERS[i].hash === hash) {
+          match = USERS[i];
+          break;
+        }
+      }
+      if (match) {
+        loginSuccess({ email: match.email, role: match.role, name: match.name, biz: match.biz }, pass);
+      } else {
+        showError('Invalid email or password. Please try again.');
+        setBtn('SIGN IN →', false);
+      }
+    });
+  }
+
+  function loginSuccess(user, pass) {
+    currentUser = user;
+    if (pass) sessionStorage.setItem('aria_session_pass', pass);
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    initApp();
+  }
+
+  function logout() {
+    currentUser = null;
+    document.getElementById('login-screen').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('login-email').value = '';
+    document.getElementById('login-pass').value = '';
+    setBtn('SIGN IN →', false);
+    hideError();
+  }
+
+  // ── Bind events ──
+  document.getElementById('login-btn').addEventListener('click', doLogin);
+  document.getElementById('login-pass').addEventListener('keydown', function(e) { if (e.key === 'Enter') doLogin(); });
+  document.getElementById('login-email').addEventListener('keydown', function(e) { if (e.key === 'Enter') doLogin(); });
+  document.getElementById('logout-btn').addEventListener('click', logout);
+  document.getElementById('modal-close').addEventListener('click', function() {
+    document.getElementById('transcript-modal').classList.remove('open');
+  });
+  document.getElementById('transcript-modal').addEventListener('click', function(e) {
+    if (e.target === this) this.classList.remove('open');
+  });
+
+  // ── Mock Data ──
+  var MOCK_CALLS = [
+    {id:1, caller:'James Whitfield', phone:'+14045551234', reason:'New patient exam', duration:'2m 14s', time:'Today 9:14 AM', status:'captured', transcript:[{r:'caller',t:'Hi I need to schedule a new patient appointment'},{r:'aria',t:"Hi there! Thanks for calling Bright Smile Dental. What's your name?"},{r:'caller',t:'James Whitfield'},{r:'aria',t:"Great James! What's the best number to reach you?"},{r:'caller',t:'404-555-1234'},{r:'aria',t:"Are you a new or existing patient?"},{r:'caller',t:'New patient'},{r:'aria',t:"And what's the reason for your visit?"},{r:'caller',t:'Just a general cleaning'},{r:'aria',t:"Perfect James! Our team will call you back shortly. Have a great day!"}]},
+    {id:2, caller:'Keisha Thompson', phone:'+17705559876', reason:'Tooth pain emergency', duration:'1m 48s', time:'Today 8:32 AM', status:'urgent', transcript:[{r:'caller',t:'I have really bad tooth pain'},{r:'aria',t:"I'm so sorry! We see dental emergencies same day. What's your name?"},{r:'caller',t:'Keisha Thompson'},{r:'aria',t:"Got it Keisha. Best number to reach you?"},{r:'caller',t:'770-555-9876'},{r:'aria',t:"I'm flagging this as urgent. Our team will call you back very shortly!"}]},
+    {id:3, caller:'David Park', phone:'+16785554321', reason:'Insurance question', duration:'3m 02s', time:'Yesterday 4:45 PM', status:'captured', transcript:[{r:'caller',t:'Do you accept BlueCross?'},{r:'aria',t:"Yes! We accept BlueCross, Delta Dental, Cigna, Aetna and most PPO plans. Anything else?"},{r:'caller',t:'I also want to make an appointment'},{r:'aria',t:"Of course! What's your name?"},{r:'caller',t:'David Park'},{r:'aria',t:"Best number to reach you David?"},{r:'caller',t:'678-555-4321'},{r:'aria',t:"Our team will call you back shortly. Have a great day!"}]},
+    {id:4, caller:'Unknown', phone:'+14045558765', reason:'Hung up', duration:'0m 12s', time:'Yesterday 11:20 AM', status:'missed', transcript:[]},
+    {id:5, caller:'Maria Santos', phone:'+17705552468', reason:'Whitening consultation', duration:'2m 33s', time:'Mon 3:15 PM', status:'captured', transcript:[{r:'caller',t:'I want to ask about teeth whitening'},{r:'aria',t:"Great choice! What's your name?"},{r:'caller',t:'Maria Santos'},{r:'aria',t:"Best number for our team Maria?"},{r:'caller',t:'770-555-2468'},{r:'aria',t:"Our team will call you back with all the whitening options. Talk soon!"}]},
+  ];
+
+  var MOCK_CLIENTS = [
+    {id:1, name:'Bright Smile Dental', owner:'Dr. Marcus B.', plan:'Growth', status:'active', calls:148, leads:127, mrr:397, industry:'Dental'},
+    {id:2, name:'Luxe Med Spa', owner:'Amanda Chen', plan:'Pro', status:'active', calls:312, leads:289, mrr:897, industry:'Med Spa'},
+    {id:3, name:'Premier Roofing Co.', owner:'Dale Hurst', plan:'Starter', status:'active', calls:89, leads:71, mrr:197, industry:'Roofing'},
+    {id:4, name:'Mitchell & Associates', owner:'James Mitchell', plan:'Growth', status:'active', calls:203, leads:188, mrr:397, industry:'Law'},
+    {id:5, name:'The Golden Fork', owner:'Sofia Reyes', plan:'Starter', status:'trial', calls:12, leads:9, mrr:0, industry:'Restaurant'},
+  ];
+
+  var MOCK_SETTINGS = {
+    businessName:'Bright Smile Dental',
+    greeting:"Thanks for calling Bright Smile Dental, this is Aria! How can I help you today?",
+    questions:["What's your name?","What's the best number to reach you?","Are you a new or existing patient?","What's the reason for your visit?"],
+    faqs:[{q:"Do you accept Delta Dental?",a:"Yes, we accept Delta Dental and most major PPO plans."},{q:"What are your hours?",a:"Monday through Friday 8am to 5pm, Saturdays 9am to 1pm."},{q:"Do you see emergencies?",a:"Yes, same day. I'll flag this as urgent."}]
+  };
+
+  // ── Nav config ──
+  var NAV = {
+    admin: [
+      {section:'Overview'},
+      {id:'admin-dashboard', label:'Dashboard', path:'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6'},
+      {id:'admin-clients', label:'All clients', path:'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z'},
+      {id:'admin-calls', label:'All calls', path:'M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.948V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 8V7a2 2 0 012-2z'},
+      {id:'admin-billing', label:'Billing', path:'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z'},
+    ],
+    client: [
+      {section:'My Business'},
+      {id:'client-dashboard', label:'Dashboard', path:'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6'},
+      {id:'client-leads', label:'Lead inbox', path:'M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4'},
+      {id:'client-calls', label:'Call logs', path:'M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.948V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 8V7a2 2 0 012-2z'},
+      {id:'client-settings', label:'Aria settings', path:'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z'},
+      {id:'client-billing', label:'Billing', path:'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z'},
+    ],
+    team: [
+      {section:'My Business'},
+      {id:'client-dashboard', label:'Dashboard', path:'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6'},
+      {id:'client-leads', label:'Lead inbox', path:'M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4'},
+      {id:'client-calls', label:'Call logs', path:'M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.948V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 8V7a2 2 0 012-2z'},
+    ],
+  };
+
+  function mkIcon(path) {
+    return '<svg class="nav-icon" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="' + path + '"/></svg>';
+  }
+
+  var activePage = null;
+
+  var REAL_CALLS = [];
+  var REAL_SETTINGS = null;
+
+  function initApp() {
+    document.getElementById('user-avatar').textContent = currentUser.name.charAt(0).toUpperCase();
+    document.getElementById('user-name-el').textContent = currentUser.name;
+    document.getElementById('user-biz-el').textContent = currentUser.biz;
+    document.getElementById('role-badge').textContent = '— ' + currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1);
+
+    // Load real data from server
+    loadRealData();
+
+    var nav = document.getElementById('sidebar-nav');
+    nav.innerHTML = '';
+    var items = NAV[currentUser.role] || NAV.client;
+    items.forEach(function(item) {
+      if (item.section) {
+        nav.innerHTML += '<div class="nav-section">' + item.section + '</div>';
+      } else {
+        var el = document.createElement('div');
+        el.className = 'nav-item';
+        el.id = 'nav-' + item.id;
+        el.innerHTML = mkIcon(item.path) + '<span>' + item.label + '</span>';
+        el.addEventListener('click', function() { showPage(item.id); });
+        nav.appendChild(el);
+      }
+    });
+
+    var first = items.find(function(i) { return i.id; });
+    if (first) showPage(first.id);
+  }
+
+  function showPage(id) {
+    activePage = id;
+    document.querySelectorAll('.nav-item').forEach(function(n) { n.classList.remove('active'); });
+    var navEl = document.getElementById('nav-' + id);
+    if (navEl) navEl.classList.add('active');
+    var pages = {
+      'admin-dashboard': renderAdminDashboard,
+      'admin-clients': renderAdminClients,
+      'admin-calls': renderAdminCalls,
+      'admin-billing': renderAdminBilling,
+      'client-dashboard': renderClientDashboard,
+      'client-leads': renderClientLeads,
+      'client-calls': renderClientCalls,
+      'client-settings': renderClientSettings,
+      'client-billing': renderClientBilling,
+    };
+    if (pages[id]) document.getElementById('main-content').innerHTML = pages[id]();
+  }
+
+  function callsTable(calls) {
+    var rows = calls.map(function(c) {
+      var txBtn = c.transcript.length
+        ? '<button onclick="openTx(' + c.id + ')" style="background:var(--teal-dim);border:1px solid var(--border);color:var(--teal);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer">View</button>'
+        : '<span style="color:var(--text-muted);font-size:11px">—</span>';
+      return '<tr><td style="font-weight:500">' + c.caller + '</td><td style="color:var(--text-dim);font-size:12px">' + c.phone + '</td><td style="font-size:13px">' + c.reason + '</td><td style="color:var(--text-dim);font-size:12px">' + c.duration + '</td><td style="color:var(--text-dim);font-size:12px">' + c.time + '</td><td><span class="badge ' + (c.status==='captured'?'badge-green':c.status==='urgent'?'badge-red':'badge-teal') + '">' + c.status + '</span></td><td>' + txBtn + '</td></tr>';
+    }).join('');
+    return '<div class="table-wrap"><table><thead><tr><th>Caller</th><th>Phone</th><th>Reason</th><th>Duration</th><th>Time</th><th>Status</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  function renderAdminDashboard() {
+    var totalMRR = MOCK_CLIENTS.reduce(function(s,c){return s+c.mrr;},0);
+    var totalCalls = MOCK_CLIENTS.reduce(function(s,c){return s+c.calls;},0);
+    var totalLeads = MOCK_CLIENTS.reduce(function(s,c){return s+c.leads;},0);
+    var rows = MOCK_CLIENTS.map(function(c) {
+      return '<div class="client-row"><div><div class="client-name">' + c.name + '</div><div class="client-industry">' + c.industry + ' · ' + c.owner + '</div></div><span class="badge badge-teal">' + c.plan + '</span><span>' + c.calls + ' / <span style="color:var(--teal)">' + c.leads + '</span></span><span class="badge ' + (c.status==='active'?'badge-green':c.status==='trial'?'badge-gold':'badge-red') + '">' + c.status + '</span></div>';
+    }).join('');
+    return '<div class="page-title">Overview</div><div class="page-sub">All clients · Last 30 days</div><div class="stats-grid"><div class="stat-card"><div class="stat-val">$' + totalMRR.toLocaleString() + '</div><div class="stat-label">Monthly recurring revenue</div><div class="stat-change">↑ $397 from last month</div></div><div class="stat-card"><div class="stat-val">4</div><div class="stat-label">Active clients</div><div class="stat-change">↑ 1 new this month</div></div><div class="stat-card"><div class="stat-val">' + totalCalls.toLocaleString() + '</div><div class="stat-label">Total calls handled</div></div><div class="stat-card"><div class="stat-val">' + totalLeads.toLocaleString() + '</div><div class="stat-label">Leads captured</div></div></div><div class="card"><div class="card-title">Clients</div><div class="client-row-header"><span class="col-label">Business</span><span class="col-label">Plan</span><span class="col-label">Calls / Leads</span><span class="col-label">Status</span></div>' + rows + '</div>';
+  }
+
+  function renderAdminClients() {
+    var rows = MOCK_CLIENTS.map(function(c) {
+      return '<div class="client-row"><div><div class="client-name">' + c.name + '</div><div class="client-industry">' + c.industry + ' · ' + c.owner + '</div></div><div><span class="badge badge-teal">' + c.plan + '</span><span style="font-size:12px;color:var(--text-dim);margin-left:8px">$' + c.mrr + '/mo</span></div><span>' + c.calls + ' calls / <span style="color:var(--teal)">' + c.leads + '</span> leads</span><span class="badge ' + (c.status==='active'?'badge-green':c.status==='trial'?'badge-gold':'badge-red') + '">' + c.status + '</span></div>';
+    }).join('');
+    return '<div class="page-title">All clients</div><div class="page-sub">Manage client accounts</div><div class="card"><div class="client-row-header"><span class="col-label">Business</span><span class="col-label">Plan · MRR</span><span class="col-label">Calls / Leads</span><span class="col-label">Status</span></div>' + rows + '</div>';
+  }
+
+  function renderAdminCalls() {
+    return '<div class="page-title">All calls</div><div class="page-sub">Every call across all clients</div>' + callsTable(MOCK_CALLS);
+  }
+
+  function renderAdminBilling() {
+    var rows = MOCK_CLIENTS.map(function(c) {
+      return '<tr><td>' + c.name + '</td><td><span class="badge badge-teal">' + c.plan + '</span></td><td style="color:var(--teal);font-weight:500">$' + c.mrr + '</td><td><span class="badge badge-green">Paid</span></td><td><span class="badge ' + (c.status==='active'?'badge-green':'badge-gold') + '">' + c.status + '</span></td></tr>';
+    }).join('');
+    return '<div class="page-title">Billing</div><div class="page-sub">Revenue and subscriptions</div><div class="stats-grid"><div class="stat-card"><div class="stat-val">$1,688</div><div class="stat-label">MRR</div><div class="stat-change">↑ $397 this month</div></div><div class="stat-card"><div class="stat-val">$20,256</div><div class="stat-label">ARR projected</div></div><div class="stat-card"><div class="stat-val">4</div><div class="stat-label">Paying clients</div></div><div class="stat-card"><div class="stat-val">$422</div><div class="stat-label">Avg per client</div></div></div><div class="card"><div class="card-title">Subscriptions</div><div class="table-wrap"><table><thead><tr><th>Client</th><th>Plan</th><th>MRR</th><th>Payment</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>';
+  }
+
+  function renderClientDashboard() {
+    return '<div class="page-title">' + currentUser.biz + '</div><div class="page-sub">Your Aria dashboard · Last 30 days</div><div class="stats-grid"><div class="stat-card"><div class="stat-val">148</div><div class="stat-label">Calls answered by Aria</div><div class="stat-change">↑ 22 vs last month</div></div><div class="stat-card"><div class="stat-val">127</div><div class="stat-label">Leads captured</div><div class="stat-change">86% capture rate</div></div><div class="stat-card"><div class="stat-val">2m 8s</div><div class="stat-label">Avg call duration</div></div><div class="stat-card"><div class="stat-val">$304K</div><div class="stat-label">Est. lead value</div></div></div><div class="card"><div class="card-title">Recent leads</div>' + callsTable(MOCK_CALLS.slice(0,3)) + '</div>';
+  }
+
+  function renderClientLeads() {
+    var calls = REAL_CALLS.length ? REAL_CALLS : MOCK_CALLS;
+    var sub = REAL_CALLS.length ? REAL_CALLS.length + ' leads captured' : 'Demo data — real leads appear after calls';
+    return '<div class="page-title">Lead inbox</div><div class="page-sub">' + sub + '</div>' + callsTable(calls);
+  }
+
+  function renderClientCalls() {
+    var calls = REAL_CALLS.length ? REAL_CALLS : MOCK_CALLS;
+    var sub = REAL_CALLS.length ? REAL_CALLS.length + ' calls' : 'Demo data — real calls appear after first call';
+    return '<div class="page-title">Call logs</div><div class="page-sub">' + sub + '</div>' + callsTable(calls);
+  }
+
+  function loadSettings() {
+    var saved = localStorage.getItem('aria_settings_' + currentUser.email);
+    if (saved) { try { return JSON.parse(saved); } catch(e) {} }
+    return JSON.parse(JSON.stringify(MOCK_SETTINGS));
+  }
+
+  function renderClientSettings() {
+    var s = loadSettings();
+    var qs = s.questions.map(function(q,i) {
+      return '<div class="faq-item"><div class="faq-inner"><input id="q-' + i + '" value="' + q.replace(/"/g,"&quot;") + '" placeholder="e.g. What is your name?" style="margin-bottom:0"/></div>' + (s.questions.length > 1 ? '<button class="faq-remove" onclick="removeQuestion(' + i + ')">×</button>' : '') + '</div>';
+    }).join('');
+    var faqs = s.faqs.map(function(f,i) {
+      return '<div class="faq-item"><div class="faq-inner"><input id="faq-q-' + i + '" value="' + f.q.replace(/"/g,"&quot;") + '" placeholder="Question e.g. Do you accept insurance?"/><textarea id="faq-a-' + i + '" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:9px 12px;color:var(--text);font-size:13px;font-family:DM Sans,sans-serif;outline:none;width:100%;resize:vertical;min-height:64px;line-height:1.5;margin-top:0">' + f.a.replace(/</g,'&lt;') + '</textarea></div><button class="faq-remove" onclick="removeFaq(' + i + ')">×</button></div>';
+    }).join('');
+    return '<div class="page-title">Aria settings</div><div class="page-sub">Everything here shapes how Aria sounds and what she knows about your business</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:980px"><div><div class="card"><div class="card-title">Business identity</div><div class="form-group"><label class="form-label">Business name</label><input class="form-input" id="setting-biz-name" value="' + s.businessName.replace(/"/g,"&quot;") + '" placeholder="e.g. Bright Smile Dental"/></div><div class="form-group"><label class="form-label">Aria&#39;s greeting <span style="color:var(--text-muted);font-weight:400">(first thing callers hear)</span></label><textarea class="form-textarea" id="setting-greeting" style="min-height:80px">' + s.greeting.replace(/</g,'&lt;') + '</textarea><div style="font-size:11px;color:var(--text-dim);margin-top:4px">Keep it warm and under 2 sentences.</div></div><div class="form-group"><label class="form-label">Closing message <span style="color:var(--text-muted);font-weight:400">(what Aria says before hanging up)</span></label><textarea class="form-textarea" id="setting-closing" style="min-height:70px">' + (s.closing||"Perfect! I&#39;ve got your info and someone from our team will be in touch shortly. Have a great day!").replace(/</g,'&lt;') + '</textarea></div><div class="form-group"><label class="form-label">Business hours</label><input class="form-input" id="setting-hours" value="' + (s.hours||"Monday through Friday 9am to 5pm").replace(/"/g,"&quot;") + '"/></div><div class="form-group"><label class="form-label">Urgent call handling</label><textarea class="form-textarea" id="setting-urgent" style="min-height:70px" placeholder="e.g. If someone says they are in pain, tell them we see emergencies same day and flag as urgent.">' + (s.urgent||"").replace(/</g,'&lt;') + '</textarea></div></div><div class="card"><div class="card-title">Info Aria collects <span style="color:var(--text-muted);font-weight:400">(asked in order)</span></div><div id="questions-list">' + qs + '</div><button class="add-faq-btn" onclick="addQuestion()" style="margin-top:8px">+ Add question</button></div></div><div><div class="card"><div class="card-title">FAQs Aria can answer</div><div style="font-size:12px;color:var(--text-dim);margin-bottom:14px;line-height:1.6">Add questions your callers commonly ask. Aria answers these naturally mid-conversation.</div><div id="faq-list">' + faqs + '</div><button class="add-faq-btn" onclick="addFaq()" style="margin-top:8px">+ Add FAQ</button></div><div class="card"><div class="card-title">Things Aria should never say</div><div style="font-size:12px;color:var(--text-dim);margin-bottom:14px">List anything you do NOT want Aria to say or promise.</div><textarea class="form-textarea" id="setting-never" style="min-height:90px" placeholder="e.g. Never quote specific prices. Never promise same-day appointments.">' + (s.never||"").replace(/</g,'&lt;') + '</textarea></div><div style="display:flex;align-items:center;gap:12px;margin-top:4px;flex-wrap:wrap"><button class="save-btn" onclick="saveSettings()">SAVE ALL CHANGES</button><span id="save-success" style="font-size:13px;color:var(--green);display:none"></span><span id="save-error" style="font-size:13px;color:var(--red);display:none"></span></div><div style="font-size:11px;color:var(--text-dim);margin-top:8px">Changes sync directly to Aria on the next call.</div></div></div>';
+  }
+
+
+  function renderClientBilling() {
+    return '<div class="page-title">Billing</div><div class="page-sub">Your plan and payment details</div><div style="max-width:560px"><div class="plan-display"><div style="display:flex;justify-content:space-between"><div><div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px">Current plan</div><div class="plan-name-big">Growth</div><div class="plan-price-big">$397<span>/month</span></div></div><span class="badge badge-green">Active</span></div><div class="plan-features-list"><div class="plan-feature">500 AI calls/month</div><div class="plan-feature">750 SMS/month</div><div class="plan-feature">30 custom FAQ answers</div><div class="plan-feature">Google/Outlook calendar sync</div><div class="plan-feature">CRM webhook (Zapier/Make)</div><div class="plan-feature">Missed call text-back</div></div></div><div class="card"><div class="card-title">Billing history</div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Status</th></tr></thead><tbody><tr><td style="color:var(--text-dim);font-size:12px">Mar 1, 2026</td><td>Growth Monthly</td><td style="color:var(--teal)">$397</td><td><span class="badge badge-green">Paid</span></td></tr><tr><td style="color:var(--text-dim);font-size:12px">Feb 1, 2026</td><td>Growth Monthly</td><td style="color:var(--teal)">$397</td><td><span class="badge badge-green">Paid</span></td></tr><tr><td style="color:var(--text-dim);font-size:12px">Jan 1, 2026</td><td>Setup + Growth Monthly</td><td style="color:var(--teal)">$894</td><td><span class="badge badge-green">Paid</span></td></tr></tbody></table></div></div></div>';
+  }
+
+  window.addFaq = function() {
+    var s = loadSettings();
+    s.faqs.push({q:'',a:''});
+    localStorage.setItem('aria_settings_' + currentUser.email, JSON.stringify(s));
+    activePage = null; showPage('client-settings');
+  };
+
+  window.removeFaq = function(i) {
+    var s = loadSettings();
+    s.faqs.splice(i, 1);
+    localStorage.setItem('aria_settings_' + currentUser.email, JSON.stringify(s));
+    activePage = null; showPage('client-settings');
+  };
+
+  window.addQuestion = function() {
+    var s = loadSettings();
+    s.questions.push('');
+    localStorage.setItem('aria_settings_' + currentUser.email, JSON.stringify(s));
+    activePage = null; showPage('client-settings');
+  };
+
+  window.removeQuestion = function(i) {
+    var s = loadSettings();
+    s.questions.splice(i, 1);
+    localStorage.setItem('aria_settings_' + currentUser.email, JSON.stringify(s));
+    activePage = null; showPage('client-settings');
+  };
+
+  window.saveSettings = function() {
+    var s = loadSettings();
+    var g = function(id) { var el = document.getElementById(id); return el ? el.value.trim() : null; };
+    if (g('setting-biz-name'))  s.businessName = g('setting-biz-name');
+    if (g('setting-greeting'))  s.greeting     = g('setting-greeting');
+    if (g('setting-closing'))   s.closing      = g('setting-closing');
+    if (g('setting-hours'))     s.hours        = g('setting-hours');
+    s.urgent = g('setting-urgent') || '';
+    s.never  = g('setting-never')  || '';
+    var newQs = [];
+    for (var i = 0; i < 20; i++) { var qEl = document.getElementById('q-' + i); if (qEl && qEl.value.trim()) newQs.push(qEl.value.trim()); }
+    if (newQs.length) s.questions = newQs;
+    var newFaqs = [];
+    for (var j = 0; j < 50; j++) { var fqEl = document.getElementById('faq-q-' + j); var faEl = document.getElementById('faq-a-' + j); if (fqEl && fqEl.value.trim()) newFaqs.push({q: fqEl.value.trim(), a: faEl ? faEl.value.trim() : ''}); }
+    if (newFaqs.length) s.faqs = newFaqs;
+
+    // Save locally first
+    localStorage.setItem('aria_settings_' + currentUser.email, JSON.stringify(s));
+
+    var btn = document.querySelector('.save-btn');
+    var msg = document.getElementById('save-success');
+    var errMsg = document.getElementById('save-error');
+    if (btn) btn.textContent = 'SAVING...';
+    if (btn) btn.disabled = true;
+    if (errMsg) errMsg.style.display = 'none';
+
+    // Get stored password hash to authenticate with server
+    var storedPass = sessionStorage.getItem('aria_session_pass');
+    if (!storedPass) {
+      // Prompt for password if not cached
+      storedPass = prompt('Enter your portal password to sync settings to Aria:');
+      if (storedPass) sessionStorage.setItem('aria_session_pass', storedPass);
+    }
+
+    if (!storedPass) {
+      if (btn) { btn.textContent = 'SAVE ALL CHANGES'; btn.disabled = false; }
+      if (msg) { msg.textContent = 'Saved locally only.'; msg.style.display = 'inline'; setTimeout(function(){ msg.style.display = 'none'; }, 3000); }
+      return;
+    }
+
+    fetch('https://web-production-46fe1e.up.railway.app/client-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: currentUser.email, password: storedPass, settings: s })
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      if (btn) { btn.textContent = 'SAVE ALL CHANGES'; btn.disabled = false; }
+      if (data.success) {
+        if (msg) { msg.textContent = 'Saved! Aria will use these settings on the next call.'; msg.style.display = 'inline'; setTimeout(function(){ msg.style.display = 'none'; }, 4000); }
+      } else {
+        sessionStorage.removeItem('aria_session_pass');
+        if (errMsg) { errMsg.textContent = 'Could not sync to Aria: ' + (data.error || 'Unknown error'); errMsg.style.display = 'inline'; }
+      }
+    })
+    .catch(function() {
+      if (btn) { btn.textContent = 'SAVE ALL CHANGES'; btn.disabled = false; }
+      if (msg) { msg.textContent = 'Saved locally. Aria sync unavailable right now.'; msg.style.display = 'inline'; setTimeout(function(){ msg.style.display = 'none'; }, 4000); }
+    });
+  };
+
+  window.openTx = function(id) {
+    var call = MOCK_CALLS.find(function(c){return c.id===id;});
+    if (!call || !call.transcript.length) return;
+    document.getElementById('modal-title').textContent = 'Transcript — ' + call.caller + ' · ' + call.time;
+    document.getElementById('modal-body').innerHTML = call.transcript.map(function(m) {
+      return '<div class="msg ' + (m.r==='aria'?'aria-msg':'') + '"><div class="msg-role ' + m.r + '">' + (m.r==='aria'?'Aria':'Caller') + '</div><div class="msg-text">' + m.t + '</div></div>';
+    }).join('');
+    document.getElementById('transcript-modal').classList.add('open');
+  };
+
+  window.addFaq = function() {
+    var list = document.getElementById('faq-list');
+    var div = document.createElement('div');
+    div.className = 'faq-item';
+    div.innerHTML = '<div class="faq-inner"><input placeholder="Question"/><input placeholder="Answer"/></div><button class="faq-remove" onclick="this.closest(\'.faq-item\').remove()">×</button>';
+    list.appendChild(div);
+  };
+
+
+
+})();
+</script>
+</body>
+</html>
