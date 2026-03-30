@@ -1263,3 +1263,244 @@ async function handleCalendarIntegration(session) {
     case 'calendly': await handleCalendlyIntegration(session, config); break;
   }
 }
+
+// ============================================================
+//  CONVERSATION ENGINE
+// ============================================================
+
+function escapeXml(str) {
+  return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;");
+}
+
+function extractLeadData(session, text) {
+  const msgs = session.messages;
+  const prevAria = msgs.length >= 2 ? msgs[msgs.length - 2] : null;
+  if (!session.leadData.name && prevAria?.role === "assistant") {
+    const askedName = /name|call you|who (am i|is this)/i.test(prevAria.content);
+    if (askedName && text.split(" ").length <= 4) {
+      session.leadData.name = text.replace(/[^a-zA-Z\s]/g, "").trim();
+    }
+  }
+  if (!session.leadData.phone || session.leadData.phone === "unknown") {
+    const digits = text.replace(/\D/g, "");
+    if (digits.length >= 10) session.leadData.phone = digits;
+  }
+  if (!session.leadData.reason && prevAria?.role === "assistant") {
+    const askedReason = /help|reason|visit|interested|matter|calling/i.test(prevAria.content);
+    if (askedReason && text.length > 3) session.leadData.reason = text.slice(0, 80);
+  }
+  if (!session.leadData.reason) {
+    const keywords = ["appointment","reservation","booking","consultation","question","emergency","pain","repair","injury","dinner","lunch","table"];
+    for (const k of keywords) if (text.toLowerCase().includes(k)) { session.leadData.reason = k; break; }
+  }
+}
+
+function hasEnoughInfo(session) {
+  const { config } = session;
+  const questionsCount = config.appointmentQuestions?.length || 3;
+  return session.turnCount >= questionsCount + 1;
+}
+
+function buildClosingMessage(session) {
+  const name = session.leadData.name ? ` ${session.leadData.name.split(" ")[0]}` : "";
+  return `Perfect${name}! I've got everything I need. Someone from our team will be in touch with you shortly. Have a great day!`;
+}
+
+async function getAriaReply(session) {
+  const { config, messages, turnCount } = session;
+  const questions = config.appointmentQuestions || ["What's your name?", "What's your callback number?", "How can we help?"];
+  const faqs = config.faqs?.length ? config.faqs.map(f => `- If asked about "${f.q}", say: ${f.a}`).join("\n") : "None";
+
+  const qIndex = Math.min(turnCount - 1, questions.length - 1);
+  const currentQuestion = questions[qIndex];
+  const isLast = qIndex >= questions.length - 1;
+  const prevMsg = messages.length >= 2 ? messages[messages.length - 2] : null;
+
+  const callerJustAskedFaq = prevMsg?.role === "user" && config.faqs?.some(f => {
+    const callerLower = prevMsg.content.toLowerCase();
+    const faqLower = f.q.toLowerCase();
+    if (callerLower.includes(faqLower)) return true;
+    const keywords = faqLower.split(/\s+/).filter(w => w.length > 3);
+    return keywords.some(k => callerLower.includes(k));
+  });
+
+  // Live booking check
+  const lastCallerMsg = messages[messages.length - 1]?.content || "";
+  if (config.liveBooking && config.calendarConfig?.serviceAccountEmail) {
+    const bookingResult = await handleBookingRequest(session, lastCallerMsg);
+    if (bookingResult) {
+      if (bookingResult.startsWith("confirmed:")) {
+        const timeStr = bookingResult.replace("confirmed:", "");
+        session.closed = true;
+        session.notified = true;
+        return `Perfect! I've gone ahead and booked your appointment for ${timeStr}. You'll receive a confirmation shortly. Have a great day!`;
+      }
+      if (bookingResult.startsWith("suggest:")) {
+        const [, timeStr, isoStr] = bookingResult.split(":");
+        session.pendingSuggestedTime = isoStr;
+        return `That time is already taken — but I have availability on ${timeStr}. Does that work for you?`;
+      }
+      if (bookingResult === "unavailable") {
+        return `I'm having trouble finding an open slot right now. Let me take your info and someone from our team will call you back to get you scheduled.`;
+      }
+    }
+    if (session.pendingSuggestedTime && /yes|sure|that works|perfect|sounds good/i.test(lastCallerMsg)) {
+      const suggestedTime = new Date(session.pendingSuggestedTime);
+      const booked = await bookGoogleAppointment(session, suggestedTime);
+      if (booked) {
+        const timeStr = suggestedTime.toLocaleString('en-US', {weekday:'long',month:'long',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true});
+        session.closed = true;
+        session.notified = true;
+        delete session.pendingSuggestedTime;
+        return `Great! You are all set for ${timeStr}. We will see you then!`;
+      }
+    }
+  }
+
+  const system = `You are Aria, a phone receptionist for ${config.businessName}.
+
+${callerJustAskedFaq
+  ? `The caller asked something related to your FAQs. Answer it naturally using this information:\n${faqs}\n\nAfter answering, ask: "${currentQuestion}"`
+  : `Ask exactly this question in a warm natural way: "${currentQuestion}"`
+}
+
+${isLast ? `This is the last question. After asking it, you will confirm their info and wrap up.` : ""}
+
+STRICT RULES:
+- ONE or TWO sentences maximum
+- Do NOT ask any other question besides "${currentQuestion}"
+- Do NOT say "Thanks for calling" or re-introduce yourself
+- Do NOT skip this question or replace it with a different one`;
+
+  const response = await anthropic.messages.create({
+    model:      "claude-haiku-4-5-20251001",
+    max_tokens: 80,
+    system,
+    messages:   messages.slice(-6),
+  });
+  return response.content[0].text.trim();
+}
+
+// ============================================================
+//  WEBSOCKET — Media Stream
+// ============================================================
+wss.on("connection", (ws) => {
+  let callSid    = null;
+  let dg         = null;
+  let transcript = "";
+  let timer      = null;
+  let busy       = false;
+
+  function startDeepgram() {
+    if (dg) { try { dg.finish(); } catch(e){} }
+    dg = deepgram.listen.live({
+      model:           "nova-2-phonecall",
+      language:        "en-US",
+      smart_format:    true,
+      interim_results: false,
+      endpointing:     500,
+      encoding:        "mulaw",
+      sample_rate:     8000,
+      channels:        1,
+    });
+    dg.on(LiveTranscriptionEvents.Open, () => console.log(`🟢 Deepgram ready (${callSid})`));
+    dg.on(LiveTranscriptionEvents.Transcript, (data) => {
+      const text = data.channel?.alternatives?.[0]?.transcript?.trim();
+      if (!text || !data.is_final) return;
+      transcript += (transcript ? " " : "") + text;
+      console.log(`📝 "${text}"`);
+      clearTimeout(timer);
+      timer = setTimeout(() => handleTranscript(), 800);
+    });
+    dg.on(LiveTranscriptionEvents.Error, (e) => console.error("DG error:", e?.message));
+  }
+
+  async function handleTranscript() {
+    const text = transcript.trim();
+    transcript = "";
+    if (!text || busy) return;
+
+    const session = SESSIONS.get(callSid);
+    if (!session || session.closed) return;
+
+    busy = true;
+    try {
+      session.messages.push({ role: "user", content: text });
+      session.turnCount++;
+      extractLeadData(session, text);
+      console.log(`👤 Turn ${session.turnCount}: "${text}"`);
+
+      const shouldClose = session.turnCount >= 10 || hasEnoughInfo(session);
+      let reply;
+
+      if (shouldClose) {
+        reply = buildClosingMessage(session);
+        session.messages.push({ role: "assistant", content: reply });
+        session.closed = true;
+      } else {
+        reply = await getAriaReply(session);
+        session.messages.push({ role: "assistant", content: reply });
+      }
+
+      console.log(`🤖 Aria: "${reply}"`);
+      const safe = escapeXml(reply);
+
+      if (session.closed) {
+        await client.calls(callSid).update({
+          twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safe}</Say><Pause length="1"/><Hangup/></Response>`
+        });
+        if (dg) { try { dg.finish(); } catch(e){} }
+        setTimeout(async () => {
+          try { await client.calls(callSid).update({ status: "completed" }); } catch(e){}
+        }, 15000);
+      } else {
+        await client.calls(callSid).update({
+          twiml: `<Response><Say voice="Polly.Joanna-Neural" language="en-US">${safe}</Say><Connect><Stream url="wss://${SERVER_URL.replace("https://","")}/media-stream"><Parameter name="callSid" value="${callSid}"/></Stream></Connect></Response>`
+        });
+        setTimeout(() => {
+          busy = false;
+          startDeepgram();
+        }, 1500);
+        return;
+      }
+    } catch(err) {
+      console.error("Handle error:", err.message);
+    }
+    busy = false;
+  }
+
+  ws.on("message", (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw); } catch(e) { return; }
+
+    if (msg.event === "start") {
+      const sid = msg.start.customParameters?.callSid || msg.start.callSid;
+      if (sid === callSid) {
+        const session = SESSIONS.get(sid);
+        if (!session || session.closed) {
+          try { client.calls(sid).update({ status: "completed" }); } catch(e){}
+          return;
+        }
+        return;
+      }
+      callSid = sid;
+      console.log(`🎙 Stream started for ${callSid}`);
+      startDeepgram();
+    }
+
+    if (msg.event === "media" && dg) {
+      try { dg.send(Buffer.from(msg.media.payload, "base64")); } catch(e){}
+    }
+
+    if (msg.event === "stop") {
+      clearTimeout(timer);
+      if (dg) { try { dg.finish(); } catch(e){} }
+      console.log(`🔴 Stream stopped for ${callSid}`);
+    }
+  });
+
+  ws.on("close", () => {
+    clearTimeout(timer);
+    if (dg) { try { dg.finish(); } catch(e){} }
+  });
+});
