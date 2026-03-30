@@ -171,6 +171,75 @@ app.get("/", (req, res) => res.json({ status: "Converta.AI v3 running" }));
 //  MISSED CALL TEXT-BACK
 //  Fires when caller hangs up before Aria answers (no session)
 // ============================================================
+
+// ============================================================
+//  INCOMING CALL
+// ============================================================
+app.post("/incoming-call", async (req, res) => {
+  const callSid    = req.body.CallSid;
+  const toNumber   = req.body.To || process.env.TWILIO_PHONE_NUMBER;
+  const fromNumber = req.body.From || "unknown";
+
+  // Check for abuse
+  const abuse = checkAbuse(fromNumber, toNumber);
+  if (!abuse.allowed) {
+    console.log(`🚫 Call rejected from ${fromNumber} — reason: ${abuse.reason}`);
+    return abuseResponse(res, abuse.reason);
+  }
+
+  const baseConfig  = CLIENT_CONFIGS[toNumber];
+  const ownerEmail  = baseConfig?.ownerEmail || null;
+
+  let config = (activeDemoConfig && demoExpiry > Date.now())
+    ? activeDemoConfig
+    : getClientConfig(toNumber, ownerEmail);
+
+  // Apply dynamic settings on top of demo config if saved from portal
+  if (activeDemoConfig && demoExpiry > Date.now()) {
+    const demoEmail = activeDemoConfig.ownerEmail || null;
+    if (demoEmail) {
+      const dynamic = CLIENT_SETTINGS.get(demoEmail);
+      if (dynamic) {
+        config = {
+          ...activeDemoConfig,
+          businessName:         dynamic.businessName         || activeDemoConfig.businessName,
+          greeting:             dynamic.greeting              || activeDemoConfig.greeting,
+          closing:              dynamic.closing               || activeDemoConfig.closing,
+          hours:                dynamic.hours                 || activeDemoConfig.hours,
+          urgent:               dynamic.urgent                || activeDemoConfig.urgent,
+          never:                dynamic.never                 || activeDemoConfig.never,
+          appointmentQuestions: dynamic.questions?.length     ? dynamic.questions : activeDemoConfig.appointmentQuestions,
+          faqs:                 dynamic.faqs?.length          ? dynamic.faqs      : activeDemoConfig.faqs,
+        };
+        console.log(`⚙️ Demo config overridden with portal settings for ${demoEmail}`);
+      }
+    }
+  }
+
+  console.log(`📞 Call ${callSid} → ${config.businessName} from ${fromNumber}`);
+
+  // Create session
+  SESSIONS.set(callSid, createSession(callSid, config, fromNumber));
+
+  // Register status callback
+  try {
+    await client.calls(callSid).update({
+      statusCallback: `${SERVER_URL}/call-status`,
+      statusCallbackMethod: "POST",
+      statusCallbackEvent: ["completed"],
+    });
+  } catch(e) { console.log("Status callback warn:", e.message); }
+
+  const twiml = new VoiceResponse();
+  twiml.say({ voice: "Polly.Joanna-Neural", language: "en-US" }, config.greeting);
+  const connect = twiml.connect();
+  const stream = connect.stream({ url: `wss://${SERVER_URL.replace("https://", "")}/media-stream` });
+  stream.parameter({ name: "callSid", value: callSid });
+
+  res.set("Content-Type", "text/xml");
+  res.send(twiml.toString());
+});
+
 app.post("/missed-call", async (req, res) => {
   res.sendStatus(200);
   const callSid    = req.body.CallSid;
