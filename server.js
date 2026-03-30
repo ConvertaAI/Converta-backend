@@ -684,8 +684,42 @@ async function getAriaReply(session) {
     prevMsg.content.toLowerCase().includes(f.q.toLowerCase())
   );
 
-  // If caller asked a FAQ, answer it then ask the current question
-  // Otherwise just ask the current question
+  // ── LIVE BOOKING: check if caller mentioned a date/time ──
+  const lastCallerMsg = messages[messages.length - 1]?.content || "";
+  if (config.liveBooking && config.calendarConfig?.serviceAccountEmail) {
+    const bookingResult = await handleBookingRequest(session, lastCallerMsg);
+    if (bookingResult) {
+      if (bookingResult.startsWith("confirmed:")) {
+        const timeStr = bookingResult.replace("confirmed:", "");
+        session.closed = true;
+        session.notified = true;
+        return `Perfect! I've gone ahead and booked your appointment for ${timeStr}. You'll receive a confirmation shortly. Is there anything else you need before I let you go?`;
+      }
+      if (bookingResult.startsWith("suggest:")) {
+        const [, timeStr, isoStr] = bookingResult.split(":");
+        session.pendingSuggestedTime = isoStr;
+        return `That time is already taken — but I have availability on ${timeStr}. Does that work for you?`;
+      }
+      if (bookingResult === "unavailable") {
+        return `I'm having trouble finding an open slot right now. Let me take your info and someone from our team will call you back to get you scheduled.`;
+      }
+    }
+
+    // If caller confirmed a suggested time
+    if (session.pendingSuggestedTime && /yes|sure|that works|perfect|sounds good/i.test(lastCallerMsg)) {
+      const suggestedTime = new Date(session.pendingSuggestedTime);
+      const booked = await bookGoogleAppointment(session, suggestedTime);
+      if (booked) {
+        const timeStr = suggestedTime.toLocaleString('en-US', {weekday:'long',month:'long',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true});
+        session.closed = true;
+        session.notified = true;
+        delete session.pendingSuggestedTime;
+        return `Great! You are all set for ${timeStr}. We will see you then!`;
+      }
+    }
+  }
+
+  // Standard question flow
   const system = `You are Aria, a phone receptionist for ${config.businessName}.
 
 ${callerJustAskedFaq
@@ -705,7 +739,7 @@ STRICT RULES:
     model:      "claude-haiku-4-5-20251001",
     max_tokens: 80,
     system,
-    messages:   messages.slice(-6), // only last 6 messages for speed
+    messages:   messages.slice(-6),
   });
   return response.content[0].text.trim();
 }
@@ -742,8 +776,8 @@ function extractLeadData(session, text) {
 function hasEnoughInfo(session) {
   const { config } = session;
   const questionsCount = config.appointmentQuestions?.length || 3;
-  // Only close after ALL questions have been asked (one per turn)
-  return session.turnCount >= questionsCount;
+  // Add 1 buffer turn for the caller's initial message before questions start
+  return session.turnCount >= questionsCount + 1;
 }
 
 function buildClosingMessage(session) {
@@ -956,6 +990,242 @@ app.post("/recording-status", async (req, res) => {
     console.log(`📧 Fallback voicemail email sent for ${from}`);
   } catch(e) { console.error("Fallback email error:", e.message); }
 });
+
+
+// ============================================================
+//  LIVE CALENDAR BOOKING
+//  Checks Google Calendar availability and books appointments
+//  mid-call during conversation
+// ============================================================
+
+// Parse natural language date/time from caller speech
+function parseDateTime(text) {
+  const now = new Date();
+  const today = new Date(now);
+  today.setHours(0,0,0,0);
+
+  text = text.toLowerCase().trim();
+
+  // Day references
+  const days = { sunday:0, monday:1, tuesday:2, wednesday:3, thursday:4, friday:5, saturday:6 };
+  const months = { january:0, february:1, march:2, april:3, may:4, june:5, july:6, august:7, september:8, october:9, november:10, december:11 };
+
+  let date = null;
+  let hour = null;
+  let minute = 0;
+
+  // Today / tomorrow
+  if (/today/.test(text)) date = new Date(today);
+  else if (/tomorrow/.test(text)) { date = new Date(today); date.setDate(date.getDate()+1); }
+  else if (/next week/.test(text)) { date = new Date(today); date.setDate(date.getDate()+7); }
+
+  // Day names — "next tuesday", "this friday", "on monday"
+  for (const [day, num] of Object.entries(days)) {
+    if (text.includes(day)) {
+      const d = new Date(today);
+      const diff = (num - d.getDay() + 7) % 7 || 7;
+      d.setDate(d.getDate() + diff);
+      date = d;
+      break;
+    }
+  }
+
+  // Month + day — "march 15", "the 15th"
+  for (const [month, num] of Object.entries(months)) {
+    const match = text.match(new RegExp(month + '\\s+(\\d{1,2})'));
+    if (match) {
+      date = new Date(now.getFullYear(), num, parseInt(match[1]));
+      if (date < today) date.setFullYear(date.getFullYear()+1);
+      break;
+    }
+  }
+  const dayMatch = text.match(/the (\d{1,2})(?:st|nd|rd|th)/);
+  if (!date && dayMatch) {
+    date = new Date(today);
+    date.setDate(parseInt(dayMatch[1]));
+    if (date < today) date.setMonth(date.getMonth()+1);
+  }
+
+  // Time parsing
+  const timeMatch = text.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
+  if (timeMatch) {
+    hour = parseInt(timeMatch[1]);
+    minute = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+    const meridiem = timeMatch[3];
+    if (meridiem === 'pm' && hour < 12) hour += 12;
+    if (meridiem === 'am' && hour === 12) hour = 0;
+  }
+
+  // Vague time references
+  if (/morning/.test(text) && !hour) hour = 9;
+  if (/afternoon/.test(text) && !hour) hour = 14;
+  if (/evening/.test(text) && !hour) hour = 17;
+  if (/noon|midday/.test(text) && !hour) hour = 12;
+
+  if (!date) return null;
+  if (hour !== null) date.setHours(hour, minute, 0, 0);
+
+  return date;
+}
+
+// Get Google Calendar access token
+async function getGoogleToken(cal) {
+  const crypto = require('crypto');
+  const now = Math.floor(Date.now()/1000);
+  const header  = Buffer.from(JSON.stringify({alg:'RS256',typ:'JWT'})).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({
+    iss: cal.serviceAccountEmail,
+    scope: 'https://www.googleapis.com/auth/calendar',
+    aud: 'https://oauth2.googleapis.com/token',
+    exp: now+3600, iat: now,
+  })).toString('base64url');
+  const sign = crypto.createSign('RSA-SHA256');
+  sign.update(`${header}.${payload}`);
+  const sig = sign.sign(cal.privateKey.replace(/\\n/g,'\n'), 'base64url');
+  const jwt = `${header}.${payload}.${sig}`;
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:`grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`
+  });
+  const data = await res.json();
+  if (!data.access_token) throw new Error('No Google token: '+JSON.stringify(data));
+  return data.access_token;
+}
+
+// Check if a time slot is available on Google Calendar
+async function checkAvailability(cal, startTime, durationMins) {
+  try {
+    const token = await getGoogleToken(cal);
+    const endTime = new Date(startTime.getTime() + durationMins*60000);
+
+    const res = await fetch('https://www.googleapis.com/calendar/v3/freeBusy', {
+      method:'POST',
+      headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},
+      body: JSON.stringify({
+        timeMin: startTime.toISOString(),
+        timeMax: endTime.toISOString(),
+        items: [{ id: cal.calendarId }],
+      })
+    });
+    const data = await res.json();
+    const busy = data.calendars?.[cal.calendarId]?.busy || [];
+    return busy.length === 0; // true = available
+  } catch(e) {
+    console.error('Availability check error:', e.message);
+    return null; // null = unknown, proceed with booking
+  }
+}
+
+// Book appointment on Google Calendar
+async function bookGoogleAppointment(session, startTime) {
+  const { config, leadData } = session;
+  const cal = config.calendarConfig;
+  const durationMins = config.appointmentDuration || 30;
+
+  try {
+    const token = await getGoogleToken(cal);
+    const endTime = new Date(startTime.getTime() + durationMins*60000);
+
+    const res = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal.calendarId)}/events`,
+      {
+        method:'POST',
+        headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},
+        body: JSON.stringify({
+          summary: `📅 ${leadData.name||'New Patient'} — ${config.businessName}`,
+          description: [
+            `Patient: ${leadData.name||'Unknown'}`,
+            `Phone: ${leadData.phone||'Unknown'}`,
+            `Reason: ${leadData.reason||'Unknown'}`,
+            `Booked by Aria at ${new Date().toLocaleString()}`,
+          ].join('\n'),
+          start: { dateTime: startTime.toISOString(), timeZone:'America/New_York' },
+          end:   { dateTime: endTime.toISOString(),   timeZone:'America/New_York' },
+          colorId: '10', // green = confirmed
+          reminders: { useDefault:false, overrides:[{method:'popup',minutes:30},{method:'email',minutes:60}] },
+        })
+      }
+    );
+    const evt = await res.json();
+    if (evt.id) {
+      session.bookedAppointment = {
+        time: startTime,
+        eventId: evt.id,
+        link: evt.htmlLink,
+      };
+      console.log(`📅 Appointment booked: ${evt.htmlLink}`);
+      return true;
+    }
+    return false;
+  } catch(e) {
+    console.error('Booking error:', e.message);
+    return false;
+  }
+}
+
+// Find next available slot if requested time is busy
+async function findNextAvailable(cal, preferredTime, durationMins, businessHours) {
+  const start = new Date(preferredTime);
+  const openHour  = businessHours?.openHour  || 9;
+  const closeHour = businessHours?.closeHour || 17;
+
+  for (let attempt = 0; attempt < 8; attempt++) {
+    // If outside hours, move to next morning
+    if (start.getHours() < openHour) start.setHours(openHour, 0, 0, 0);
+    if (start.getHours() >= closeHour) {
+      start.setDate(start.getDate()+1);
+      start.setHours(openHour, 0, 0, 0);
+      // Skip weekends if business is Mon-Fri
+      while (businessHours?.weekdaysOnly && (start.getDay()===0||start.getDay()===6)) {
+        start.setDate(start.getDate()+1);
+      }
+    }
+    const avail = await checkAvailability(cal, start, durationMins);
+    if (avail) return new Date(start);
+    // Try next slot
+    start.setMinutes(start.getMinutes() + durationMins);
+  }
+  return null;
+}
+
+// Main booking handler — called from conversation logic
+async function handleBookingRequest(session, callerText) {
+  const { config } = session;
+  if (!config.liveBooking || !config.calendarConfig?.serviceAccountEmail) return null;
+
+  const requestedTime = parseDateTime(callerText);
+  if (!requestedTime) return null;
+
+  const durationMins   = config.appointmentDuration || 30;
+  const businessHours  = config.businessHours || { openHour:9, closeHour:17, weekdaysOnly:true };
+
+  // Check if requested time is available
+  const available = await checkAvailability(config.calendarConfig, requestedTime, durationMins);
+
+  if (available === true) {
+    const booked = await bookGoogleAppointment(session, requestedTime);
+    if (booked) {
+      const timeStr = requestedTime.toLocaleString('en-US', {
+        weekday:'long', month:'long', day:'numeric',
+        hour:'numeric', minute:'2-digit', hour12:true
+      });
+      return `confirmed:${timeStr}`;
+    }
+  } else if (available === false) {
+    // Find next available slot
+    const nextSlot = await findNextAvailable(config.calendarConfig, requestedTime, durationMins, businessHours);
+    if (nextSlot) {
+      const timeStr = nextSlot.toLocaleString('en-US', {
+        weekday:'long', month:'long', day:'numeric',
+        hour:'numeric', minute:'2-digit', hour12:true
+      });
+      return `suggest:${timeStr}:${nextSlot.toISOString()}`;
+    }
+    return 'unavailable';
+  }
+
+  return null;
+}
 
 // ============================================================
 //  START
