@@ -333,9 +333,9 @@ app.options("/portal-login", (req, res) => {
 // Track calls per number per business
 const CALL_TRACKER = new Map(); // key: "from:to" -> { count, firstCall, lastCall, blocked }
 const BLOCKED_NUMBERS = new Set(); // permanently blocked numbers
-const HOURLY_LIMIT   = 3;   // max calls from same number per hour per business
-const DAILY_LIMIT    = 8;   // max calls from same number per day per business
-const GLOBAL_HOURLY  = 10;  // max calls from same number across ALL businesses per hour
+const HOURLY_LIMIT   = 10;  // max calls from same number per hour per business
+const DAILY_LIMIT    = 30;  // max calls from same number per day per business
+const GLOBAL_HOURLY  = 40;  // max calls from same number across ALL businesses per hour
 
 function getTracker(from, to) {
   const key = `${from}:${to}`;
