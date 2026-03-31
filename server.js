@@ -1311,10 +1311,19 @@ async function getAriaReply(session) {
   const questions = config.appointmentQuestions || ["What's your name?", "What's your callback number?", "How can we help?"];
   const faqs = config.faqs?.length ? config.faqs.map(f => `- If asked about "${f.q}", say: ${f.a}`).join("\n") : "None";
 
-  const qIndex = Math.min(turnCount - 1, questions.length - 1);
+  // turn 1 = caller opener, questions start at turn 2
+  // So qIndex = turnCount - 2, clamped to valid range
+  const qIndex = Math.min(Math.max(turnCount - 2, 0), questions.length - 1);
   const currentQuestion = questions[qIndex];
   const isLast = qIndex >= questions.length - 1;
   const prevMsg = messages.length >= 2 ? messages[messages.length - 2] : null;
+
+  // Skip question if we already captured that info from opener
+  let effectiveQ = currentQuestion;
+  if (session.leadData.reason && /reason|visit|help|calling|interested|matter/i.test(currentQuestion)) {
+    const nextIdx = Math.min(qIndex + 1, questions.length - 1);
+    if (nextIdx !== qIndex) effectiveQ = questions[nextIdx];
+  }
 
   const callerJustAskedFaq = prevMsg?.role === "user" && config.faqs?.some(f => {
     const callerLower = prevMsg.content.toLowerCase();
@@ -1357,20 +1366,32 @@ async function getAriaReply(session) {
     }
   }
 
+  // Check if this question is already answered from the conversation
+  const alreadyAnswered =
+    (/name|call you/i.test(currentQuestion) && session.leadData.name) ||
+    (/number|reach|phone/i.test(currentQuestion) && session.leadData.phone && session.leadData.phone !== "unknown") ||
+    (/reason|visit|help|calling|interested|matter/i.test(currentQuestion) && session.leadData.reason);
+
+  // If already answered, move to next question
+  const finalQuestion = alreadyAnswered && qIndex < questions.length - 1
+    ? questions[qIndex + 1]
+    : currentQuestion;
+  const finalIsLast = questions.indexOf(finalQuestion) >= questions.length - 1;
+
   const system = `You are Aria, a phone receptionist for ${config.businessName}.
 
 ${callerJustAskedFaq
-  ? `The caller asked something related to your FAQs. Answer it naturally using this information:\n${faqs}\n\nAfter answering, ask: "${effectiveQuestion}"`
-  : `Ask exactly this question in a warm natural way: "${effectiveQuestion}"`
+  ? `The caller asked something related to your FAQs. Answer it naturally using this information:\n${faqs}\n\nAfter answering, ask: "${finalQuestion}"`
+  : `Ask exactly this question in a warm natural way: "${finalQuestion}"`
 }
 
-${effectiveIsLast ? `This is the last question. After asking it, you will confirm their info and wrap up.` : ""}
+${finalIsLast ? `This is the last question. After asking it, you will confirm their info and wrap up.` : ""}
 
 STRICT RULES:
 - ONE or TWO sentences maximum
-- Do NOT ask any other question besides "${effectiveQuestion}"
+- Do NOT ask any other question besides "${finalQuestion}"
 - Do NOT say "Thanks for calling" or re-introduce yourself
-- Do NOT skip this question or replace it with a different one`;
+- Do NOT ask for information the caller already provided`;
 
   const response = await anthropic.messages.create({
     model:      "claude-haiku-4-5-20251001",
