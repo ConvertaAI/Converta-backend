@@ -1367,21 +1367,29 @@ async function getAriaReply(session) {
   }
 
   // Check if this question is already answered from the conversation
+  // If caller asked something not in FAQs, give a short holding answer then ask question
+  const callerLastMsg = messages[messages.length - 1]?.content || "";
+  const askedSomethingUnknown = !callerJustAskedFaq && /price|cost|how much|insurance|hours|location|address|parking|wait|available|accept/i.test(callerLastMsg);
+
   const system = `You are Aria, a phone receptionist for ${config.businessName}.
 
+Your ONLY job right now is to say this question out loud: "${currentQuestion}"
+
 ${callerJustAskedFaq
-  ? `The caller asked something related to your FAQs. Answer it naturally using this information:\n${faqs}\n\nAfter answering, ask: "${currentQuestion}"`
-  : `Ask exactly this question in a warm natural way: "${currentQuestion}"`
+  ? `The caller asked a question. First give this short answer: ${faqs}
+Then immediately ask: "${currentQuestion}"`
+  : askedSomethingUnknown
+    ? `The caller asked something you don't have info on. Say: "I don't have that info handy but our team will be happy to help — let me grab your details." Then ask: "${currentQuestion}"`
+    : `Ask this question naturally: "${currentQuestion}"`
 }
 
-${isLast ? "This is the last question. Do NOT say goodbye yet — just ask this question and wait for their answer." : ""}
-
-STRICT RULES:
-- ONE or TWO sentences maximum
-- Do NOT ask any other question besides "${currentQuestion}"
-- Do NOT say goodbye, wrap up, or end the call
-- Do NOT say "Thanks for calling" or re-introduce yourself
-- Do NOT ask for information the caller already provided`;
+ABSOLUTE RULES — no exceptions:
+- Maximum 2 sentences total
+- You MUST ask "${currentQuestion}" — this is required
+- Do NOT offer to look up information, check pricing, or research anything
+- Do NOT say you will get back to them with information
+- Do NOT end the call or say goodbye
+- Do NOT say anything after asking the question`;
 
   const response = await anthropic.messages.create({
     model:      "claude-haiku-4-5-20251001",
