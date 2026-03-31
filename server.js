@@ -1360,15 +1360,15 @@ async function getAriaReply(session) {
   const system = `You are Aria, a phone receptionist for ${config.businessName}.
 
 ${callerJustAskedFaq
-  ? `The caller asked something related to your FAQs. Answer it naturally using this information:\n${faqs}\n\nAfter answering, ask: "${currentQuestion}"`
-  : `Ask exactly this question in a warm natural way: "${currentQuestion}"`
+  ? `The caller asked something related to your FAQs. Answer it naturally using this information:\n${faqs}\n\nAfter answering, ask: "${effectiveQuestion}"`
+  : `Ask exactly this question in a warm natural way: "${effectiveQuestion}"`
 }
 
-${isLast ? `This is the last question. After asking it, you will confirm their info and wrap up.` : ""}
+${effectiveIsLast ? `This is the last question. After asking it, you will confirm their info and wrap up.` : ""}
 
 STRICT RULES:
 - ONE or TWO sentences maximum
-- Do NOT ask any other question besides "${currentQuestion}"
+- Do NOT ask any other question besides "${effectiveQuestion}"
 - Do NOT say "Thanks for calling" or re-introduce yourself
 - Do NOT skip this question or replace it with a different one`;
 
