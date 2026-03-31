@@ -1367,29 +1367,19 @@ async function getAriaReply(session) {
   }
 
   // Check if this question is already answered from the conversation
-  const alreadyAnswered =
-    (/name|call you/i.test(currentQuestion) && session.leadData.name) ||
-    (/number|reach|phone/i.test(currentQuestion) && session.leadData.phone && session.leadData.phone !== "unknown") ||
-    (/reason|visit|help|calling|interested|matter/i.test(currentQuestion) && session.leadData.reason);
-
-  // If already answered, move to next question
-  const finalQuestion = alreadyAnswered && qIndex < questions.length - 1
-    ? questions[qIndex + 1]
-    : currentQuestion;
-  const finalIsLast = questions.indexOf(finalQuestion) >= questions.length - 1;
-
   const system = `You are Aria, a phone receptionist for ${config.businessName}.
 
 ${callerJustAskedFaq
-  ? `The caller asked something related to your FAQs. Answer it naturally using this information:\n${faqs}\n\nAfter answering, ask: "${finalQuestion}"`
-  : `Ask exactly this question in a warm natural way: "${finalQuestion}"`
+  ? `The caller asked something related to your FAQs. Answer it naturally using this information:\n${faqs}\n\nAfter answering, ask: "${currentQuestion}"`
+  : `Ask exactly this question in a warm natural way: "${currentQuestion}"`
 }
 
-${finalIsLast ? `This is the last question. After asking it, you will confirm their info and wrap up.` : ""}
+${isLast ? "This is the last question. Do NOT say goodbye yet — just ask this question and wait for their answer." : ""}
 
 STRICT RULES:
 - ONE or TWO sentences maximum
-- Do NOT ask any other question besides "${finalQuestion}"
+- Do NOT ask any other question besides "${currentQuestion}"
+- Do NOT say goodbye, wrap up, or end the call
 - Do NOT say "Thanks for calling" or re-introduce yourself
 - Do NOT ask for information the caller already provided`;
 
