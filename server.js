@@ -1318,12 +1318,7 @@ async function getAriaReply(session) {
   const isLast = qIndex >= questions.length - 1;
   const prevMsg = messages.length >= 2 ? messages[messages.length - 2] : null;
 
-  // Skip question if we already captured that info from opener
-  let effectiveQ = currentQuestion;
-  if (session.leadData.reason && /reason|visit|help|calling|interested|matter/i.test(currentQuestion)) {
-    const nextIdx = Math.min(qIndex + 1, questions.length - 1);
-    if (nextIdx !== qIndex) effectiveQ = questions[nextIdx];
-  }
+
 
   const callerJustAskedFaq = prevMsg?.role === "user" && config.faqs?.some(f => {
     const callerLower = prevMsg.content.toLowerCase();
@@ -1448,6 +1443,8 @@ wss.on("connection", (ws) => {
       session.turnCount++;
       extractLeadData(session, text);
       console.log(`👤 Turn ${session.turnCount}: "${text}"`);
+      const qDbg = Math.min(Math.max(session.turnCount - 2, 0), (session.config.appointmentQuestions?.length||3) - 1);
+      console.log(`❓ Will ask Q${qDbg}: "${session.config.appointmentQuestions?.[qDbg]}"`);      
 
       const shouldClose = session.turnCount >= 10 || hasEnoughInfo(session);
       let reply;
