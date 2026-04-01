@@ -1366,25 +1366,27 @@ async function getAriaReply(session) {
   const callerLastMsg = messages[messages.length - 1]?.content || "";
   const askedSomethingUnknown = !callerJustAskedFaq && /price|cost|how much|insurance|hours|location|address|parking|wait|available|accept/i.test(callerLastMsg);
 
+  // Tell Claude what we already know so it doesn't re-ask
+  const alreadyKnow = [];
+  if (session.leadData.name) alreadyKnow.push("caller name is already known: " + session.leadData.name);
+  if (session.leadData.phone && session.leadData.phone !== "unknown") alreadyKnow.push("phone is already known");
+  if (session.leadData.reason) alreadyKnow.push("reason is already known");
+  const knowCtx = alreadyKnow.length ? "IMPORTANT — you already have: " + alreadyKnow.join(", ") + ". Do NOT ask for any of this again." : "";
+
   const system = `You are Aria, a phone receptionist for ${config.businessName}.
+${knowCtx}
 
-Your ONLY job right now is to say this question out loud: "${currentQuestion}"
+Ask this question in one natural sentence: "${currentQuestion}"
 
-${callerJustAskedFaq
-  ? `The caller asked a question. First give this short answer: ${faqs}
-Then immediately ask: "${currentQuestion}"`
-  : askedSomethingUnknown
-    ? `The caller asked something you don't have info on. Say: "I don't have that info handy but our team will be happy to help — let me grab your details." Then ask: "${currentQuestion}"`
-    : `Ask this question naturally: "${currentQuestion}"`
-}
+${callerJustAskedFaq ? "Answer their FAQ question briefly first using: " + faqs + " Then ask: " + currentQuestion : ""}
+${askedSomethingUnknown ? 'Say: "Our team can help with that — let me get your details first." Then ask: ' + currentQuestion : ""}
 
-ABSOLUTE RULES — no exceptions:
-- Maximum 2 sentences total
-- You MUST ask "${currentQuestion}" — this is required
-- Do NOT offer to look up information, check pricing, or research anything
-- Do NOT say you will get back to them with information
-- Do NOT end the call or say goodbye
-- Do NOT say anything after asking the question`;
+RULES:
+- ONE sentence — just ask "${currentQuestion}"
+- If you already know the caller's name, do NOT ask for their name
+- Do NOT repeat questions already answered
+- Do NOT say goodbye or end the call
+- Do NOT add anything after the question`
 
   const response = await anthropic.messages.create({
     model:      "claude-haiku-4-5-20251001",
